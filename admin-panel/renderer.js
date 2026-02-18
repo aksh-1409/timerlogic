@@ -9788,7 +9788,8 @@ async function deleteBranch(branchId, branchName) {
     }
 
     try {
-        const deleteResponse = await fetch(`${SERVER_URL}/api/config/branches/${encodeURIComponent(branchName)}`, {
+        // Use branchId (the actual value) instead of branchName (display name)
+        const deleteResponse = await fetch(`${SERVER_URL}/api/config/branches/${encodeURIComponent(branchId)}`, {
             method: 'DELETE'
         });
 
