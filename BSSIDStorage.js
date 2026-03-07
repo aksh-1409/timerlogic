@@ -134,13 +134,19 @@ class BSSIDStorage {
       }
 
       // Support both single BSSID (string) and multiple BSSIDs (array)
+      // Check both 'bssids' and 'bssid' fields for compatibility
       let authorizedBSSIDs = [];
       
-      if (Array.isArray(currentPeriod.bssid)) {
-        // Multiple BSSIDs
+      // First check 'bssids' field (new format)
+      if (currentPeriod.bssids && Array.isArray(currentPeriod.bssids) && currentPeriod.bssids.length > 0) {
+        authorizedBSSIDs = currentPeriod.bssids.filter(b => b && b.trim() !== '');
+      }
+      // Then check 'bssid' field
+      else if (Array.isArray(currentPeriod.bssid)) {
+        // Multiple BSSIDs in 'bssid' field
         authorizedBSSIDs = currentPeriod.bssid.filter(b => b && b.trim() !== '');
       } else if (currentPeriod.bssid && typeof currentPeriod.bssid === 'string') {
-        // Single BSSID
+        // Single BSSID string
         authorizedBSSIDs = [currentPeriod.bssid];
       }
 
@@ -155,11 +161,13 @@ class BSSIDStorage {
         };
       }
 
-      // Check if current BSSID matches ANY of the authorized BSSIDs
-      const normalizedCurrent = currentBSSID?.toLowerCase();
+      // Normalize and check if current BSSID matches ANY of the authorized BSSIDs
+      const normalizedCurrent = currentBSSID?.toLowerCase()?.trim();
       const isValid = authorizedBSSIDs.some(
-        bssid => bssid.toLowerCase() === normalizedCurrent
+        bssid => bssid.toLowerCase().trim() === normalizedCurrent
       );
+
+      console.log(`🔍 BSSID Validation: Current="${normalizedCurrent}", Authorized=[${authorizedBSSIDs.join(', ')}], Valid=${isValid}`);
 
       return {
         valid: isValid,
