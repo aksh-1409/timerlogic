@@ -178,12 +178,22 @@ export default function TestBSSID({ theme }) {
         addResult('Full Schedule', `Found ${schedule.length} periods:`);
         
         schedule.forEach((period, index) => {
+          // Handle both single BSSID and multiple BSSIDs
+          let bssidDisplay = 'Not configured';
+          if (period.bssids && Array.isArray(period.bssids) && period.bssids.length > 0) {
+            bssidDisplay = period.bssids.join(', ');
+          } else if (Array.isArray(period.bssid) && period.bssid.length > 0) {
+            bssidDisplay = period.bssid.join(', ');
+          } else if (period.bssid && typeof period.bssid === 'string') {
+            bssidDisplay = period.bssid;
+          }
+          
           addResult(
             `Period ${period.period || index + 1}`,
             `${period.subject || 'No subject'}\n` +
             `Time: ${period.startTime} - ${period.endTime}\n` +
             `Room: ${period.room || 'No room'}\n` +
-            `BSSID: ${period.bssid || 'Not configured'}\n` +
+            `BSSID: ${bssidDisplay}\n` +
             `Teacher: ${period.teacher || 'N/A'}`
           );
         });
@@ -193,12 +203,23 @@ export default function TestBSSID({ theme }) {
         
         if (currentPeriod) {
           addResult('Current Period', `✅ Active class found!`, true);
+          
+          // Handle both single BSSID and multiple BSSIDs
+          let bssidDisplay = 'Not configured';
+          if (currentPeriod.bssids && Array.isArray(currentPeriod.bssids) && currentPeriod.bssids.length > 0) {
+            bssidDisplay = currentPeriod.bssids.join(', ');
+          } else if (Array.isArray(currentPeriod.bssid) && currentPeriod.bssid.length > 0) {
+            bssidDisplay = currentPeriod.bssid.join(', ');
+          } else if (currentPeriod.bssid && typeof currentPeriod.bssid === 'string') {
+            bssidDisplay = currentPeriod.bssid;
+          }
+          
           addResult(
             'Current Class Details',
             `Subject: ${currentPeriod.subject}\n` +
             `Room: ${currentPeriod.room}\n` +
             `Time: ${currentPeriod.startTime} - ${currentPeriod.endTime}\n` +
-            `BSSID: ${currentPeriod.bssid || 'Not configured'}`
+            `BSSID: ${bssidDisplay}`
           );
 
           // Test validation with current BSSID
@@ -207,12 +228,20 @@ export default function TestBSSID({ theme }) {
             if (deviceBSSID) {
               const validation = await BSSIDStorage.validateCurrentBSSID(deviceBSSID);
               
+              // Format expected BSSIDs for display
+              let expectedDisplay = 'N/A';
+              if (Array.isArray(validation.expected)) {
+                expectedDisplay = validation.expected.join(', ');
+              } else if (validation.expected) {
+                expectedDisplay = validation.expected;
+              }
+              
               addResult(
                 'BSSID Validation',
                 `Status: ${validation.valid ? '✅ AUTHORIZED' : '❌ NOT AUTHORIZED'}\n` +
                 `Reason: ${validation.reason}\n` +
                 `Message: ${validation.message}\n` +
-                `Expected: ${validation.expected || 'N/A'}\n` +
+                `Expected: ${expectedDisplay}\n` +
                 `Current: ${validation.current || 'N/A'}`,
                 validation.valid
               );
@@ -287,12 +316,22 @@ export default function TestBSSID({ theme }) {
           
           // Show schedule details
           data.schedule.forEach((period, index) => {
+            // Handle both single BSSID and multiple BSSIDs
+            let bssidDisplay = 'Not configured';
+            if (period.bssids && Array.isArray(period.bssids) && period.bssids.length > 0) {
+              bssidDisplay = period.bssids.join(', ');
+            } else if (Array.isArray(period.bssid) && period.bssid.length > 0) {
+              bssidDisplay = period.bssid.join(', ');
+            } else if (period.bssid && typeof period.bssid === 'string') {
+              bssidDisplay = period.bssid;
+            }
+            
             addResult(
               `Period ${period.period || index + 1}`,
               `${period.subject || 'No subject'}\n` +
               `Time: ${period.startTime} - ${period.endTime}\n` +
               `Room: ${period.room || 'No room'}\n` +
-              `BSSID: ${period.bssid || 'Not configured'}`
+              `BSSID: ${bssidDisplay}`
             );
           });
 

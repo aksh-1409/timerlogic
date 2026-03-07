@@ -1608,12 +1608,21 @@ async function broadcastBSSIDScheduleUpdate(semester, branch) {
         const scheduleWithBSSID = await Promise.all(
             todaySchedule.map(async (period) => {
                 let bssid = null;
+                let bssids = [];
                 let roomInfo = null;
 
                 if (period.room) {
                     const classroom = await Classroom.findOne({ roomNumber: period.room });
-                    if (classroom && classroom.wifiBSSID) {
-                        bssid = classroom.wifiBSSID;
+                    if (classroom) {
+                        // Support both single BSSID and multiple BSSIDs
+                        if (classroom.wifiBSSIDs && Array.isArray(classroom.wifiBSSIDs) && classroom.wifiBSSIDs.length > 0) {
+                            bssids = classroom.wifiBSSIDs.filter(b => b && b.trim() !== '');
+                            bssid = bssids[0]; // Primary BSSID for backward compatibility
+                        } else if (classroom.wifiBSSID && classroom.wifiBSSID.trim() !== '') {
+                            bssid = classroom.wifiBSSID;
+                            bssids = [classroom.wifiBSSID];
+                        }
+                        
                         roomInfo = {
                             building: classroom.building,
                             capacity: classroom.capacity,
@@ -1642,7 +1651,8 @@ async function broadcastBSSIDScheduleUpdate(semester, branch) {
                     room: period.room || '',
                     startTime: startTime,
                     endTime: endTime,
-                    bssid: bssid,
+                    bssid: bssid || bssids, // Return array if multiple, single if one, or null
+                    bssids: bssids, // Always return array for new clients
                     roomInfo: roomInfo
                 };
             })
@@ -1705,12 +1715,21 @@ async function broadcastBSSIDUpdateForRoom(roomNumber) {
                 const scheduleWithBSSID = await Promise.all(
                     todaySchedule.map(async (period) => {
                         let bssid = null;
+                        let bssids = [];
                         let roomInfo = null;
 
                         if (period.room) {
                             const classroom = await Classroom.findOne({ roomNumber: period.room });
-                            if (classroom && classroom.wifiBSSID) {
-                                bssid = classroom.wifiBSSID;
+                            if (classroom) {
+                                // Support both single BSSID and multiple BSSIDs
+                                if (classroom.wifiBSSIDs && Array.isArray(classroom.wifiBSSIDs) && classroom.wifiBSSIDs.length > 0) {
+                                    bssids = classroom.wifiBSSIDs.filter(b => b && b.trim() !== '');
+                                    bssid = bssids[0]; // Primary BSSID for backward compatibility
+                                } else if (classroom.wifiBSSID && classroom.wifiBSSID.trim() !== '') {
+                                    bssid = classroom.wifiBSSID;
+                                    bssids = [classroom.wifiBSSID];
+                                }
+                                
                                 roomInfo = {
                                     building: classroom.building,
                                     capacity: classroom.capacity,
@@ -1727,7 +1746,8 @@ async function broadcastBSSIDUpdateForRoom(roomNumber) {
                             room: period.room,
                             startTime: period.startTime,
                             endTime: period.endTime,
-                            bssid: bssid,
+                            bssid: bssid || bssids, // Return array if multiple, single if one, or null
+                            bssids: bssids, // Always return array for new clients
                             roomInfo: roomInfo
                         };
                     })
@@ -4517,12 +4537,21 @@ app.get('/api/daily-bssid-schedule', async (req, res) => {
         const scheduleWithBSSID = await Promise.all(
             todaySchedule.map(async (period) => {
                 let bssid = null;
+                let bssids = [];
                 let roomInfo = null;
 
                 if (period.room) {
                     const classroom = await Classroom.findOne({ roomNumber: period.room });
-                    if (classroom && classroom.wifiBSSID) {
-                        bssid = classroom.wifiBSSID;
+                    if (classroom) {
+                        // Support both single BSSID and multiple BSSIDs
+                        if (classroom.wifiBSSIDs && Array.isArray(classroom.wifiBSSIDs) && classroom.wifiBSSIDs.length > 0) {
+                            bssids = classroom.wifiBSSIDs.filter(b => b && b.trim() !== '');
+                            bssid = bssids[0]; // Primary BSSID for backward compatibility
+                        } else if (classroom.wifiBSSID && classroom.wifiBSSID.trim() !== '') {
+                            bssid = classroom.wifiBSSID;
+                            bssids = [classroom.wifiBSSID];
+                        }
+                        
                         roomInfo = {
                             building: classroom.building,
                             capacity: classroom.capacity,
@@ -4552,7 +4581,8 @@ app.get('/api/daily-bssid-schedule', async (req, res) => {
                     room: period.room || '',
                     startTime: startTime,
                     endTime: endTime,
-                    bssid: bssid,
+                    bssid: bssid || bssids, // Return array if multiple, single if one, or null
+                    bssids: bssids, // Always return array for new clients
                     roomInfo: roomInfo
                 };
             })
@@ -5669,10 +5699,27 @@ app.get('/api/attendance/authorized-bssid/:studentId', async (req, res) => {
 
         const currentClass = student.attendanceSession.currentClass;
 
-        // Get classroom BSSID
+        // Get classroom BSSID(s)
         const classroom = await Classroom.findOne({ roomNumber: currentClass.room });
 
-        if (!classroom || !classroom.wifiBSSID) {
+        if (!classroom) {
+            return res.json({
+                success: true,
+                authorized: false,
+                reason: 'room_not_found',
+                message: `Room ${currentClass.room} not found`
+            });
+        }
+
+        // Support both single BSSID and multiple BSSIDs
+        let bssids = [];
+        if (classroom.wifiBSSIDs && Array.isArray(classroom.wifiBSSIDs) && classroom.wifiBSSIDs.length > 0) {
+            bssids = classroom.wifiBSSIDs.filter(b => b && b.trim() !== '');
+        } else if (classroom.wifiBSSID && classroom.wifiBSSID.trim() !== '') {
+            bssids = [classroom.wifiBSSID];
+        }
+
+        if (bssids.length === 0) {
             return res.json({
                 success: true,
                 authorized: false,
@@ -5684,7 +5731,8 @@ app.get('/api/attendance/authorized-bssid/:studentId', async (req, res) => {
         res.json({
             success: true,
             authorized: true,
-            bssid: classroom.wifiBSSID,
+            bssid: bssids[0], // Primary BSSID for backward compatibility
+            bssids: bssids, // All BSSIDs
             room: currentClass.room,
             lecture: {
                 subject: currentClass.subject,
@@ -5715,25 +5763,26 @@ app.post('/api/attendance/validate-bssid', async (req, res) => {
             });
         }
 
-        // Get classroom's authorized BSSID
+        // Get classroom's authorized BSSID(s)
         const classroom = await Classroom.findOne({ roomNumber: roomNumber });
 
         // Use WiFi verification service
         const wifiVerificationResult = wifiVerificationService.verifyClassroomWiFi(currentBSSID, classroom);
 
-        console.log(`📶 BSSID Check: ${currentBSSID} vs ${classroom?.wifiBSSID} = ${wifiVerificationResult.isMatch ? '✅' : '❌'}`);
+        console.log(`📶 BSSID Check: ${currentBSSID} vs ${wifiVerificationResult.authorizedBSSIDs?.join(', ')} = ${wifiVerificationResult.isMatch ? '✅' : '❌'}`);
 
         res.json({
             success: true,
             authorized: wifiVerificationResult.isMatch,
-            expectedBSSID: classroom?.wifiBSSID,
+            expectedBSSID: wifiVerificationResult.authorizedBSSIDs?.[0], // Primary for backward compatibility
+            expectedBSSIDs: wifiVerificationResult.authorizedBSSIDs, // All BSSIDs
             currentBSSID: currentBSSID,
             room: classroom ? {
                 roomNumber: classroom.roomNumber,
                 building: classroom.building
             } : null,
             reason: wifiVerificationResult.isMatch ? 'authorized' : 
-                    (!classroom || !classroom.wifiBSSID) ? 'room_not_configured' : 'wrong_bssid',
+                    (!classroom || wifiVerificationResult.authorizedBSSIDs?.length === 0) ? 'room_not_configured' : 'wrong_bssid',
             message: wifiVerificationResult.message
         });
 
@@ -6001,7 +6050,8 @@ const classroomSchema = new mongoose.Schema({
     roomNumber: { type: String, required: true, unique: true },
     building: { type: String, required: true },
     capacity: { type: Number, required: true },
-    wifiBSSID: String,
+    wifiBSSID: String, // Legacy single BSSID (kept for backward compatibility)
+    wifiBSSIDs: [String], // New: Array of BSSIDs for multiple WiFi networks
     isActive: { type: Boolean, default: true },
     createdAt: { type: Date, default: Date.now }
 });
@@ -6744,8 +6794,8 @@ app.put('/api/classrooms/:id', async (req, res) => {
     try {
         console.log('Updating classroom:', req.params.id, req.body);
         
-        // Check if BSSID is being updated
-        const bssidChanged = req.body.wifiBSSID !== undefined;
+        // Check if BSSID is being updated (either single or multiple)
+        const bssidChanged = req.body.wifiBSSID !== undefined || req.body.wifiBSSIDs !== undefined;
         const roomNumber = req.body.roomNumber;
         
         if (mongoose.connection.readyState === 1) {

@@ -1563,19 +1563,30 @@ async function loadClassrooms() {
 
 function renderClassrooms(classroomsToRender) {
     const tbody = document.getElementById('classroomsTableBody');
-    tbody.innerHTML = classroomsToRender.map((classroom, index) => `
+    tbody.innerHTML = classroomsToRender.map((classroom, index) => {
+        // Display all BSSIDs or fallback to single BSSID
+        const bssids = classroom.wifiBSSIDs && classroom.wifiBSSIDs.length > 0 
+            ? classroom.wifiBSSIDs 
+            : (classroom.wifiBSSID ? [classroom.wifiBSSID] : []);
+        
+        const bssidDisplay = bssids.length > 0
+            ? bssids.map(b => `<code class="bssid-code">${b}</code>`).join('<br>')
+            : '<span style="color: var(--text-secondary);">N/A</span>';
+        
+        return `
         <tr>
             <td>${classroom.roomNumber}</td>
             <td>${classroom.building}</td>
             <td>${classroom.capacity}</td>
-            <td><code class="bssid-code">${classroom.wifiBSSID || 'N/A'}</code></td>
+            <td>${bssidDisplay}</td>
             <td><span class="status-badge ${classroom.isActive ? 'status-active' : 'status-inactive'}">${classroom.isActive ? 'Active' : 'Inactive'}</span></td>
             <td>
                 <button class="action-btn edit" onclick="editClassroom('${classroom._id}')">✏️ Edit</button>
                 <button class="action-btn delete" onclick="deleteClassroom('${classroom._id}')">🗑️ Delete</button>
             </td>
         </tr>
-    `).join('');
+    `;
+    }).join('');
 }
 
 function showAddClassroomModal() {
@@ -1596,8 +1607,13 @@ function showAddClassroomModal() {
                 <input type="number" name="capacity" class="form-input" required>
             </div>
             <div class="form-group">
-                <label>WiFi BSSID</label>
-                <input type="text" name="wifiBSSID" class="form-input" placeholder="XX:XX:XX:XX:XX:XX">
+                <label>WiFi BSSIDs</label>
+                <div id="bssidContainer">
+                    <div class="bssid-input-group" style="display: flex; gap: 8px; margin-bottom: 8px;">
+                        <input type="text" name="wifiBSSID_0" class="form-input" placeholder="XX:XX:XX:XX:XX:XX" style="flex: 1;">
+                    </div>
+                </div>
+                <button type="button" class="btn btn-secondary" onclick="addBSSIDField()" style="margin-top: 8px; width: 100%;">➕ More BSSID</button>
             </div>
             <div class="form-group">
                 <label>
@@ -1615,8 +1631,26 @@ function showAddClassroomModal() {
 async function handleAddClassroom(e) {
     e.preventDefault();
     const formData = new FormData(e.target);
-    const classroomData = Object.fromEntries(formData);
-    classroomData.isActive = formData.has('isActive');
+    
+    // Collect all BSSID inputs
+    const wifiBSSIDs = [];
+    let index = 0;
+    while (formData.has(`wifiBSSID_${index}`)) {
+        const bssid = formData.get(`wifiBSSID_${index}`).trim();
+        if (bssid) {
+            wifiBSSIDs.push(bssid);
+        }
+        index++;
+    }
+
+    const classroomData = {
+        roomNumber: formData.get('roomNumber'),
+        building: formData.get('building'),
+        capacity: formData.get('capacity'),
+        wifiBSSIDs: wifiBSSIDs,
+        wifiBSSID: wifiBSSIDs[0] || '', // Keep first BSSID for backward compatibility
+        isActive: formData.has('isActive')
+    };
 
     try {
         const response = await fetch(`${SERVER_URL}/api/classrooms`, {
@@ -3003,6 +3037,34 @@ async function deleteClassroom(id) {
     }
 }
 
+// Helper functions for dynamic BSSID fields
+function addBSSIDField() {
+    const container = document.getElementById('bssidContainer');
+    const currentCount = container.querySelectorAll('.bssid-input-group').length;
+    
+    const newField = document.createElement('div');
+    newField.className = 'bssid-input-group';
+    newField.style.cssText = 'display: flex; gap: 8px; margin-bottom: 8px;';
+    newField.innerHTML = `
+        <input type="text" name="wifiBSSID_${currentCount}" class="form-input" placeholder="XX:XX:XX:XX:XX:XX" style="flex: 1;">
+        <button type="button" class="btn btn-secondary" onclick="removeBSSIDField(this)" style="padding: 8px 12px;">🗑️</button>
+    `;
+    
+    container.appendChild(newField);
+}
+
+function removeBSSIDField(button) {
+    const fieldGroup = button.parentElement;
+    fieldGroup.remove();
+    
+    // Reindex remaining fields
+    const container = document.getElementById('bssidContainer');
+    const inputs = container.querySelectorAll('input[name^="wifiBSSID_"]');
+    inputs.forEach((input, index) => {
+        input.name = `wifiBSSID_${index}`;
+    });
+}
+
 // Edit functions
 async function editStudent(id) {
     try {
@@ -3343,6 +3405,11 @@ async function editClassroom(id) {
         return;
     }
 
+    // Ensure wifiBSSIDs array exists (backward compatibility)
+    const bssids = classroom.wifiBSSIDs && classroom.wifiBSSIDs.length > 0 
+        ? classroom.wifiBSSIDs 
+        : (classroom.wifiBSSID ? [classroom.wifiBSSID] : ['']);
+
     const modalBody = document.getElementById('modalBody');
     modalBody.innerHTML = `
         <h2>Edit Classroom</h2>
@@ -3360,8 +3427,16 @@ async function editClassroom(id) {
                 <input type="number" name="capacity" class="form-input" value="${classroom.capacity}" required>
             </div>
             <div class="form-group">
-                <label>WiFi BSSID</label>
-                <input type="text" name="wifiBSSID" class="form-input" value="${classroom.wifiBSSID || ''}" placeholder="XX:XX:XX:XX:XX:XX">
+                <label>WiFi BSSIDs</label>
+                <div id="bssidContainer">
+                    ${bssids.map((bssid, index) => `
+                        <div class="bssid-input-group" style="display: flex; gap: 8px; margin-bottom: 8px;">
+                            <input type="text" name="wifiBSSID_${index}" class="form-input" value="${bssid || ''}" placeholder="XX:XX:XX:XX:XX:XX" style="flex: 1;">
+                            ${index > 0 ? `<button type="button" class="btn btn-secondary" onclick="removeBSSIDField(this)" style="padding: 8px 12px;">🗑️</button>` : ''}
+                        </div>
+                    `).join('')}
+                </div>
+                <button type="button" class="btn btn-secondary" onclick="addBSSIDField()" style="margin-top: 8px; width: 100%;">➕ More BSSID</button>
             </div>
             <div class="form-group">
                 <label>
@@ -3375,8 +3450,26 @@ async function editClassroom(id) {
     document.getElementById('editClassroomForm').addEventListener('submit', async (e) => {
         e.preventDefault();
         const formData = new FormData(e.target);
-        const classroomData = Object.fromEntries(formData);
-        classroomData.isActive = formData.has('isActive');
+        
+        // Collect all BSSID inputs
+        const wifiBSSIDs = [];
+        let index = 0;
+        while (formData.has(`wifiBSSID_${index}`)) {
+            const bssid = formData.get(`wifiBSSID_${index}`).trim();
+            if (bssid) {
+                wifiBSSIDs.push(bssid);
+            }
+            index++;
+        }
+
+        const classroomData = {
+            roomNumber: formData.get('roomNumber'),
+            building: formData.get('building'),
+            capacity: formData.get('capacity'),
+            wifiBSSIDs: wifiBSSIDs,
+            wifiBSSID: wifiBSSIDs[0] || '', // Keep first BSSID for backward compatibility
+            isActive: formData.has('isActive')
+        };
 
         try {
             const response = await fetch(`${SERVER_URL}/api/classrooms/${id}`, {

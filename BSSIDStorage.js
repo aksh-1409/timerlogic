@@ -91,7 +91,15 @@ class BSSIDStorage {
         const endMinutes = endHour * 60 + endMin;
 
         if (currentTime >= startMinutes && currentTime < endMinutes) {
-          console.log(`📍 Current period: ${period.subject} in ${period.room} (BSSID: ${period.bssid})`);
+          // Format BSSID for logging
+          let bssidLog = 'Not configured';
+          if (Array.isArray(period.bssid) && period.bssid.length > 0) {
+            bssidLog = period.bssid.join(', ');
+          } else if (period.bssid && typeof period.bssid === 'string') {
+            bssidLog = period.bssid;
+          }
+          
+          console.log(`📍 Current period: ${period.subject} in ${period.room} (BSSID: ${bssidLog})`);
           return period;
         }
       }
@@ -106,6 +114,7 @@ class BSSIDStorage {
 
   /**
    * Validate BSSID against current period
+   * Supports both single BSSID and multiple BSSIDs per classroom
    * @param {string} currentBSSID - BSSID detected from device
    * @returns {Promise<Object>} Validation result {valid, expected, current, period}
    */
@@ -124,7 +133,18 @@ class BSSIDStorage {
         };
       }
 
-      if (!currentPeriod.bssid) {
+      // Support both single BSSID (string) and multiple BSSIDs (array)
+      let authorizedBSSIDs = [];
+      
+      if (Array.isArray(currentPeriod.bssid)) {
+        // Multiple BSSIDs
+        authorizedBSSIDs = currentPeriod.bssid.filter(b => b && b.trim() !== '');
+      } else if (currentPeriod.bssid && typeof currentPeriod.bssid === 'string') {
+        // Single BSSID
+        authorizedBSSIDs = [currentPeriod.bssid];
+      }
+
+      if (authorizedBSSIDs.length === 0) {
         return {
           valid: false,
           reason: 'bssid_not_configured',
@@ -135,7 +155,11 @@ class BSSIDStorage {
         };
       }
 
-      const isValid = currentBSSID?.toLowerCase() === currentPeriod.bssid.toLowerCase();
+      // Check if current BSSID matches ANY of the authorized BSSIDs
+      const normalizedCurrent = currentBSSID?.toLowerCase();
+      const isValid = authorizedBSSIDs.some(
+        bssid => bssid.toLowerCase() === normalizedCurrent
+      );
 
       return {
         valid: isValid,
@@ -143,7 +167,7 @@ class BSSIDStorage {
         message: isValid 
           ? `Authorized for ${currentPeriod.subject} in ${currentPeriod.room}`
           : `Wrong WiFi - Expected ${currentPeriod.room} WiFi`,
-        expected: currentPeriod.bssid,
+        expected: authorizedBSSIDs.length === 1 ? authorizedBSSIDs[0] : authorizedBSSIDs,
         current: currentBSSID,
         period: currentPeriod,
       };

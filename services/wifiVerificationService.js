@@ -54,9 +54,10 @@ function verifyBSSID(capturedBSSID, authorizedBSSID) {
 
 /**
  * Verify WiFi BSSID against a classroom document
+ * Supports both single BSSID (wifiBSSID) and multiple BSSIDs (wifiBSSIDs array)
  * 
  * @param {String} capturedBSSID - The BSSID detected from student's device
- * @param {Object} classroom - Classroom document with wifiBSSID field
+ * @param {Object} classroom - Classroom document with wifiBSSID or wifiBSSIDs field
  * @returns {Object} Verification result with classroom context
  */
 function verifyClassroomWiFi(capturedBSSID, classroom) {
@@ -69,8 +70,19 @@ function verifyClassroomWiFi(capturedBSSID, classroom) {
         };
     }
 
-    // Check if classroom has WiFi configured
-    if (!classroom.wifiBSSID || classroom.wifiBSSID.trim() === '') {
+    // Get BSSIDs - support both new array format and legacy single BSSID
+    let authorizedBSSIDs = [];
+    
+    if (classroom.wifiBSSIDs && Array.isArray(classroom.wifiBSSIDs) && classroom.wifiBSSIDs.length > 0) {
+        // New format: multiple BSSIDs
+        authorizedBSSIDs = classroom.wifiBSSIDs.filter(bssid => bssid && bssid.trim() !== '');
+    } else if (classroom.wifiBSSID && classroom.wifiBSSID.trim() !== '') {
+        // Legacy format: single BSSID
+        authorizedBSSIDs = [classroom.wifiBSSID];
+    }
+
+    // Check if classroom has any WiFi configured
+    if (authorizedBSSIDs.length === 0) {
         return {
             success: false,
             isMatch: false,
@@ -79,15 +91,41 @@ function verifyClassroomWiFi(capturedBSSID, classroom) {
         };
     }
 
-    // Perform BSSID verification
-    const verificationResult = verifyBSSID(capturedBSSID, classroom.wifiBSSID);
+    // Normalize captured BSSID
+    const normalizedCaptured = capturedBSSID ? capturedBSSID.toLowerCase().trim() : '';
 
-    // Add classroom context to result
+    if (!normalizedCaptured) {
+        return {
+            success: false,
+            isMatch: false,
+            message: 'Invalid BSSID: captured BSSID must be a non-empty string',
+            roomNumber: classroom.roomNumber
+        };
+    }
+
+    // Check if captured BSSID matches ANY of the authorized BSSIDs
+    let isMatch = false;
+    let matchedBSSID = null;
+
+    for (const authorizedBSSID of authorizedBSSIDs) {
+        const normalizedAuthorized = authorizedBSSID.toLowerCase().trim();
+        if (normalizedCaptured === normalizedAuthorized) {
+            isMatch = true;
+            matchedBSSID = authorizedBSSID;
+            break;
+        }
+    }
+
+    // Return verification result
     return {
-        ...verificationResult,
+        success: true,
+        isMatch,
+        capturedBSSID: normalizedCaptured,
+        authorizedBSSIDs: authorizedBSSIDs,
+        matchedBSSID: matchedBSSID,
         roomNumber: classroom.roomNumber,
         building: classroom.building,
-        message: verificationResult.isMatch
+        message: isMatch
             ? `WiFi verification successful for ${classroom.roomNumber}`
             : `WiFi verification failed: You must be in ${classroom.roomNumber} to check in`
     };
