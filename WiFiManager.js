@@ -363,13 +363,15 @@ class WiFiManager {
 
         if (classroomData.success && classroomData.classrooms) {
           this.authorizedBSSIDs = classroomData.classrooms
-            .filter(room => room.wifiBSSID && room.isActive)
-            .map(room => ({
-              bssid: room.wifiBSSID.toLowerCase(), // Normalize to lowercase
-              roomNumber: room.roomNumber,
-              building: room.building || 'Main Building',
-              capacity: room.capacity || 60
-            }));
+            .filter(room => room.wifiBSSIDs && room.wifiBSSIDs.length > 0 && room.isActive)
+            .flatMap(room => 
+              room.wifiBSSIDs.map(bssid => ({
+                bssid: bssid.toLowerCase(), // Normalize to lowercase
+                roomNumber: room.roomNumber,
+                building: room.building || 'Main Building',
+                capacity: room.capacity || 60
+              }))
+            );
 
           // If student data available, get current lecture room
           if (studentData && studentData.semester && studentData.branch) {

@@ -645,12 +645,41 @@ export default function App() {
     console.log('📋 setupSocket() called!');
 
     // Handle app state changes (background/foreground)
-    const subscription = AppState.addEventListener('change', nextAppState => {
+    const subscription = AppState.addEventListener('change', async nextAppState => {
       if (appState.current.match(/inactive|background/) && nextAppState === 'active') {
         // App came to foreground - period-based attendance (no timer)
+        console.log('📱 App came to foreground');
         backgroundTimeRef.current = null;
+        
+        // Refresh data for students when app comes to foreground
+        if (selectedRole === 'student') {
+          console.log('🔄 Refreshing data after app came to foreground...');
+          
+          // Refresh timetable
+          if (semester && branch) {
+            console.log('📅 Fetching latest timetable...');
+            await fetchTimetable(semester, branch);
+          }
+          
+          // Refresh BSSID schedule - get enrollment number from storage
+          try {
+            const storedUserData = await AsyncStorage.getItem('@user_data');
+            if (storedUserData) {
+              const parsedUserData = JSON.parse(storedUserData);
+              if (parsedUserData.enrollmentNo) {
+                console.log('📶 Fetching latest BSSID schedule (forced refresh)...');
+                await fetchDailyBSSIDSchedule(parsedUserData.enrollmentNo, true); // Force refresh
+              }
+            }
+          } catch (error) {
+            console.error('❌ Error refreshing BSSID schedule:', error);
+          }
+          
+          console.log('✅ Data refresh complete');
+        }
       } else if (nextAppState.match(/inactive|background/)) {
         // App went to background - period-based attendance (no timer)
+        console.log('📱 App went to background');
       }
       appState.current = nextAppState;
     });
@@ -758,6 +787,34 @@ export default function App() {
         console.error('❌ Error syncing offline session:', error);
       }
 
+      // Refresh timetable and BSSID schedule on reconnection
+      // This ensures students get latest data if changes were made while they were offline
+      if (selectedRole === 'student') {
+        console.log('🔄 Refreshing data after reconnection...');
+        
+        // Refresh timetable
+        if (semester && branch) {
+          console.log('📅 Fetching latest timetable...');
+          await fetchTimetable(semester, branch);
+        }
+        
+        // Refresh BSSID schedule - get enrollment number from storage
+        try {
+          const storedUserData = await AsyncStorage.getItem('@user_data');
+          if (storedUserData) {
+            const parsedUserData = JSON.parse(storedUserData);
+            if (parsedUserData.enrollmentNo) {
+              console.log('📶 Fetching latest BSSID schedule (forced refresh)...');
+              await fetchDailyBSSIDSchedule(parsedUserData.enrollmentNo, true); // Force refresh
+            }
+          }
+        } catch (error) {
+          console.error('❌ Error refreshing BSSID schedule:', error);
+        }
+        
+        console.log('✅ Data refresh complete');
+      }
+
       // Re-send current status if student is active (period-based attendance)
       if (selectedRole === 'student' && studentId) {
         console.log('📡 Re-sending student status after reconnect');
@@ -784,8 +841,36 @@ export default function App() {
       console.log(`🔄 Socket reconnect attempt #${attemptNumber}`);
     });
 
-    socketRef.current.on('reconnect', (attemptNumber) => {
+    socketRef.current.on('reconnect', async (attemptNumber) => {
       console.log(`✅ Socket reconnected after ${attemptNumber} attempts`);
+      
+      // Refresh timetable and BSSID schedule on reconnection
+      // This ensures students get latest data if changes were made while they were offline
+      if (selectedRole === 'student') {
+        console.log('🔄 Refreshing data after reconnection...');
+        
+        // Refresh timetable
+        if (semester && branch) {
+          console.log('📅 Fetching latest timetable...');
+          await fetchTimetable(semester, branch);
+        }
+        
+        // Refresh BSSID schedule - get enrollment number from storage
+        try {
+          const storedUserData = await AsyncStorage.getItem('@user_data');
+          if (storedUserData) {
+            const parsedUserData = JSON.parse(storedUserData);
+            if (parsedUserData.enrollmentNo) {
+              console.log('📶 Fetching latest BSSID schedule (forced refresh)...');
+              await fetchDailyBSSIDSchedule(parsedUserData.enrollmentNo, true); // Force refresh
+            }
+          }
+        } catch (error) {
+          console.error('❌ Error refreshing BSSID schedule:', error);
+        }
+        
+        console.log('✅ Data refresh complete');
+      }
     });
 
     socketRef.current.on('reconnect_error', (error) => {
@@ -1586,14 +1671,16 @@ export default function App() {
   };
 
   // Fetch and cache daily BSSID schedule
-  const fetchDailyBSSIDSchedule = async (enrollmentNo) => {
+  const fetchDailyBSSIDSchedule = async (enrollmentNo, forceRefresh = false) => {
     try {
-      // Check if refresh needed
-      const needsRefresh = await BSSIDStorage.needsRefresh();
-      
-      if (!needsRefresh) {
-        console.log('✅ Using cached BSSID schedule');
-        return;
+      // Check if refresh needed (skip check if force refresh)
+      if (!forceRefresh) {
+        const needsRefresh = await BSSIDStorage.needsRefresh();
+        
+        if (!needsRefresh) {
+          console.log('✅ Using cached BSSID schedule');
+          return;
+        }
       }
 
       console.log('🔄 Fetching fresh BSSID schedule...');

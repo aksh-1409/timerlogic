@@ -1,13 +1,13 @@
 
 // Configuration
 // Server URL - can be changed in Settings
-// Priority: 1. Saved in localStorage, 2. Local IP (default)
+// Priority: 1. Saved in localStorage, 2. Production URL (default)
 const savedUrl = localStorage.getItem('serverUrl');
-if (savedUrl && savedUrl.includes('localhost')) {
-    console.log('🔄 Resetting localhost URL to Local IP');
-    localStorage.setItem('serverUrl', 'http://192.168.1.7:3000');
+if (savedUrl && savedUrl.includes('onrender.com')) {
+    console.log('🔄 Resetting Render URL to Localhost URL');
+    localStorage.setItem('serverUrl', 'http://localhost:3000');
 }
-let SERVER_URL = localStorage.getItem('serverUrl') || 'http://192.168.1.7:3000';
+let SERVER_URL = localStorage.getItem('serverUrl') || 'http://localhost:3000';
 
 console.log('🌐 Admin Panel Server URL:', SERVER_URL);
 
@@ -74,15 +74,14 @@ async function loadDynamicDropdownData() {
             }
         }
 
-        // Extract unique departments from teachers
-        const teachersResponse = await fetch(`${SERVER_URL}/api/teachers`);
-        if (teachersResponse.ok) {
-            const teachersData = await teachersResponse.json();
-            if (teachersData.success && teachersData.teachers) {
-                const depts = new Set(teachersData.teachers.map(t => t.department).filter(d => d));
-                dynamicData.departments = Array.from(depts).map(d => ({
-                    value: d,
-                    label: d
+        // Fetch departments from config API
+        const departmentsResponse = await fetch(`${SERVER_URL}/api/config/departments`);
+        if (departmentsResponse.ok) {
+            const departmentsData = await departmentsResponse.json();
+            if (departmentsData.success && departmentsData.departments) {
+                dynamicData.departments = departmentsData.departments.map(d => ({
+                    value: d.value || d.code,
+                    label: d.displayName || d.name || d.value
                 }));
                 console.log(`✅ Loaded ${dynamicData.departments.length} departments`);
             }
@@ -95,7 +94,7 @@ async function loadDynamicDropdownData() {
         }
 
         if (dynamicData.departments.length === 0) {
-            console.warn('⚠️ No departments loaded from server! Please add teachers with departments.');
+            console.warn('⚠️ No departments loaded from server! Please add departments in Settings.');
         }
 
         console.log('✅ Dynamic dropdown data loaded');
@@ -1060,7 +1059,10 @@ function filterTeachers() {
     renderTeachers(filtered);
 }
 
-function showAddTeacherModal() {
+async function showAddTeacherModal() {
+    // Reload departments from server before showing form
+    await loadDynamicDropdownData();
+    
     const modalBody = document.getElementById('modalBody');
     modalBody.innerHTML = `
         <h2>Add New Teacher</h2>
@@ -1564,10 +1566,10 @@ async function loadClassrooms() {
 function renderClassrooms(classroomsToRender) {
     const tbody = document.getElementById('classroomsTableBody');
     tbody.innerHTML = classroomsToRender.map((classroom, index) => {
-        // Display all BSSIDs or fallback to single BSSID
+        // Display all BSSIDs from array
         const bssids = classroom.wifiBSSIDs && classroom.wifiBSSIDs.length > 0 
             ? classroom.wifiBSSIDs 
-            : (classroom.wifiBSSID ? [classroom.wifiBSSID] : []);
+            : [];
         
         const bssidDisplay = bssids.length > 0
             ? bssids.map(b => `<code class="bssid-code">${b}</code>`).join('<br>')
@@ -1648,7 +1650,6 @@ async function handleAddClassroom(e) {
         building: formData.get('building'),
         capacity: formData.get('capacity'),
         wifiBSSIDs: wifiBSSIDs,
-        wifiBSSID: wifiBSSIDs[0] || '', // Keep first BSSID for backward compatibility
         isActive: formData.has('isActive')
     };
 
@@ -1748,7 +1749,7 @@ async function handleBulkClassroomImport(e) {
                         roomNumber: values[0],
                         building: values[1],
                         capacity: parseInt(values[2]),
-                        wifiBSSID: values[3] || '',
+                        wifiBSSIDs: values[3] ? [values[3]] : [],
                         isActive: true
                     };
                     classroomsToImport.push(classroom);
@@ -3405,10 +3406,10 @@ async function editClassroom(id) {
         return;
     }
 
-    // Ensure wifiBSSIDs array exists (backward compatibility)
+    // Ensure wifiBSSIDs array exists
     const bssids = classroom.wifiBSSIDs && classroom.wifiBSSIDs.length > 0 
         ? classroom.wifiBSSIDs 
-        : (classroom.wifiBSSID ? [classroom.wifiBSSID] : ['']);
+        : [''];
 
     const modalBody = document.getElementById('modalBody');
     modalBody.innerHTML = `
@@ -3467,7 +3468,6 @@ async function editClassroom(id) {
             building: formData.get('building'),
             capacity: formData.get('capacity'),
             wifiBSSIDs: wifiBSSIDs,
-            wifiBSSID: wifiBSSIDs[0] || '', // Keep first BSSID for backward compatibility
             isActive: formData.has('isActive')
         };
 
@@ -3601,7 +3601,7 @@ function exportClassroomsToCSV() {
         c.roomNumber || '',
         c.building || '',
         c.capacity || '',
-        c.wifiBSSID || c.bssid || '', // Handle both field names
+        (c.wifiBSSIDs && c.wifiBSSIDs.length > 0) ? c.wifiBSSIDs.join('; ') : '',
         c.isActive ? 'Yes' : 'No',
         c.createdAt ? new Date(c.createdAt).toISOString().split('T')[0] : ''
     ]);

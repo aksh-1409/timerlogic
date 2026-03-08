@@ -4,6 +4,7 @@ import { NativeModules, PermissionsAndroid, Platform } from 'react-native';
 import WiFiManager from './WiFiManager';
 import NativeWiFiService from './NativeWiFiService';
 import BSSIDStorage from './BSSIDStorage';
+import { SERVER_BASE_URL } from './config';
 
 const { WifiModule } = NativeModules;
 
@@ -297,10 +298,9 @@ export default function TestBSSID({ theme }) {
 
       addResult('User Info', `Enrollment: ${enrollmentNo}`);
 
-      // Fetch from server
-      const SOCKET_URL = 'http://192.168.1.7:3000';
+      // Fetch from server using configured URL
       const response = await fetch(
-        `${SOCKET_URL}/api/daily-bssid-schedule?enrollmentNo=${enrollmentNo}`
+        `${SERVER_BASE_URL}/api/daily-bssid-schedule?enrollmentNo=${enrollmentNo}`
       );
 
       const data = await response.json();

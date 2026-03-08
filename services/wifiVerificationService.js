@@ -54,10 +54,10 @@ function verifyBSSID(capturedBSSID, authorizedBSSID) {
 
 /**
  * Verify WiFi BSSID against a classroom document
- * Supports both single BSSID (wifiBSSID) and multiple BSSIDs (wifiBSSIDs array)
+ * Supports array of BSSIDs (wifiBSSIDs) - handles both single and multiple BSSIDs
  * 
  * @param {String} capturedBSSID - The BSSID detected from student's device
- * @param {Object} classroom - Classroom document with wifiBSSID or wifiBSSIDs field
+ * @param {Object} classroom - Classroom document with wifiBSSIDs field
  * @returns {Object} Verification result with classroom context
  */
 function verifyClassroomWiFi(capturedBSSID, classroom) {
@@ -70,15 +70,11 @@ function verifyClassroomWiFi(capturedBSSID, classroom) {
         };
     }
 
-    // Get BSSIDs - support both new array format and legacy single BSSID
+    // Get BSSIDs from array
     let authorizedBSSIDs = [];
     
     if (classroom.wifiBSSIDs && Array.isArray(classroom.wifiBSSIDs) && classroom.wifiBSSIDs.length > 0) {
-        // New format: multiple BSSIDs
         authorizedBSSIDs = classroom.wifiBSSIDs.filter(bssid => bssid && bssid.trim() !== '');
-    } else if (classroom.wifiBSSID && classroom.wifiBSSID.trim() !== '') {
-        // Legacy format: single BSSID
-        authorizedBSSIDs = [classroom.wifiBSSID];
     }
 
     // Check if classroom has any WiFi configured

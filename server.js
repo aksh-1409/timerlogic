@@ -205,7 +205,7 @@ async function createDatabaseIndexes() {
 
         // Classroom indexes
         await Classroom.collection.createIndex({ roomNumber: 1 }, { unique: true });
-        await Classroom.collection.createIndex({ wifiBSSID: 1 });
+        await Classroom.collection.createIndex({ wifiBSSIDs: 1 });
 
         console.log('✅ Database indexes created successfully');
     } catch (error) {
@@ -1618,10 +1618,8 @@ async function broadcastBSSIDScheduleUpdate(semester, branch) {
                         if (classroom.wifiBSSIDs && Array.isArray(classroom.wifiBSSIDs) && classroom.wifiBSSIDs.length > 0) {
                             bssids = classroom.wifiBSSIDs.filter(b => b && b.trim() !== '');
                             bssid = bssids[0]; // Primary BSSID for backward compatibility
-                        } else if (classroom.wifiBSSID && classroom.wifiBSSID.trim() !== '') {
-                            bssid = classroom.wifiBSSID;
-                            bssids = [classroom.wifiBSSID];
                         }
+                        
                         
                         roomInfo = {
                             building: classroom.building,
@@ -1725,10 +1723,8 @@ async function broadcastBSSIDUpdateForRoom(roomNumber) {
                                 if (classroom.wifiBSSIDs && Array.isArray(classroom.wifiBSSIDs) && classroom.wifiBSSIDs.length > 0) {
                                     bssids = classroom.wifiBSSIDs.filter(b => b && b.trim() !== '');
                                     bssid = bssids[0]; // Primary BSSID for backward compatibility
-                                } else if (classroom.wifiBSSID && classroom.wifiBSSID.trim() !== '') {
-                                    bssid = classroom.wifiBSSID;
-                                    bssids = [classroom.wifiBSSID];
                                 }
+                                
                                 
                                 roomInfo = {
                                     building: classroom.building,
@@ -1943,7 +1939,7 @@ app.post('/api/attendance/check-in', checkInLimiter, async (req, res) => {
             }
             
             wifiVerificationResult = wifiVerificationService.verifyClassroomWiFi(wifiBSSID, classroom);
-            console.log(`📶 [CHECK-IN] WiFi verification result - Student: ${enrollmentNo}, Success: ${wifiVerificationResult.success}, Match: ${wifiVerificationResult.isMatch}, Expected: ${classroom.wifiBSSID}, Received: ${wifiBSSID}`);
+            console.log(`📶 [CHECK-IN] WiFi verification result - Student: ${enrollmentNo}, Success: ${wifiVerificationResult.success}, Match: ${wifiVerificationResult.isMatch}, Expected: ${classroom.wifiBSSIDs?.join(', ')}, Received: ${wifiBSSID}`);
         } catch (wifiError) {
             console.error(`❌ [CHECK-IN] WiFi verification error - Student: ${enrollmentNo}, Error: ${wifiError.message}`);
             return res.status(500).json({
@@ -2480,7 +2476,7 @@ app.post('/api/attendance/random-ring/verify', async (req, res) => {
                 wifiVerification: {
                     success: wifiVerified,
                     capturedBSSID: wifiBSSID,
-                    authorizedBSSID: classroom ? classroom.wifiBSSID : null,
+                    authorizedBSSIDs: classroom ? classroom.wifiBSSIDs : null,
                     message: wifiVerificationResult.message
                 }
             }
@@ -4547,10 +4543,8 @@ app.get('/api/daily-bssid-schedule', async (req, res) => {
                         if (classroom.wifiBSSIDs && Array.isArray(classroom.wifiBSSIDs) && classroom.wifiBSSIDs.length > 0) {
                             bssids = classroom.wifiBSSIDs.filter(b => b && b.trim() !== '');
                             bssid = bssids[0]; // Primary BSSID for backward compatibility
-                        } else if (classroom.wifiBSSID && classroom.wifiBSSID.trim() !== '') {
-                            bssid = classroom.wifiBSSID;
-                            bssids = [classroom.wifiBSSID];
                         }
+                        
                         
                         roomInfo = {
                             building: classroom.building,
@@ -5715,8 +5709,8 @@ app.get('/api/attendance/authorized-bssid/:studentId', async (req, res) => {
         let bssids = [];
         if (classroom.wifiBSSIDs && Array.isArray(classroom.wifiBSSIDs) && classroom.wifiBSSIDs.length > 0) {
             bssids = classroom.wifiBSSIDs.filter(b => b && b.trim() !== '');
-        } else if (classroom.wifiBSSID && classroom.wifiBSSID.trim() !== '') {
-            bssids = [classroom.wifiBSSID];
+        } else if (classroom.wifiBSSIDs[0] && classroom.wifiBSSIDs[0].trim() !== '') {
+            bssids = [classroom.wifiBSSIDs[0]];
         }
 
         if (bssids.length === 0) {
@@ -6050,8 +6044,7 @@ const classroomSchema = new mongoose.Schema({
     roomNumber: { type: String, required: true, unique: true },
     building: { type: String, required: true },
     capacity: { type: Number, required: true },
-    wifiBSSID: String, // Legacy single BSSID (kept for backward compatibility)
-    wifiBSSIDs: [String], // New: Array of BSSIDs for multiple WiFi networks
+    wifiBSSIDs: [String], // Array of BSSIDs - supports single or multiple WiFi networks
     isActive: { type: Boolean, default: true },
     createdAt: { type: Date, default: Date.now }
 });
@@ -8031,3 +8024,5 @@ app.get('/api/attendance/all', async (req, res) => {
         });
     }
 });
+
+

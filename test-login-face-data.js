@@ -1,7 +1,7 @@
 // Simple test to verify login endpoint returns face embedding field
 const fetch = require('node-fetch');
 
-const SERVER_URL = 'http://192.168.1.6:3000';
+const SERVER_URL = 'http://localhost:3000';
 
 async function testLoginFaceData() {
   console.log('🧪 Testing Login Face Data Response\n');

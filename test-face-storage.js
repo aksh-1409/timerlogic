@@ -3,7 +3,7 @@
 
 const fetch = require('node-fetch');
 
-const SERVER_URL = 'http://192.168.1.6:3000';
+const SERVER_URL = 'http://localhost:3000';
 
 async function testFaceStorage() {
   console.log('🧪 Testing Face Data Storage in LetsBunk App\n');

@@ -482,7 +482,7 @@ async function phase6() {
             building: 'CS Block',
             floor: '2',
             capacity: 40,
-            wifiBSSID: '11:22:33:44:55:66',
+            wifiBSSIDs: ['11:22:33:44:55:66'],
             wifiSSID: 'CS-Lab-WiFi',
             description: 'Computer Science Lab'
         });
@@ -494,7 +494,7 @@ async function phase6() {
         const count = r.data.classrooms?.length || 0;
         log(`       Classrooms: ${count}`, 'dim');
         r.data.classrooms?.forEach(c => {
-            log(`       • ${c.roomNumber} — BSSID: ${c.wifiBSSID}`, 'dim');
+            log(`       • ${c.roomNumber} — BSSIDs: ${c.wifiBSSIDs?.join(', ')}`, 'dim');
         });
     });
 }
