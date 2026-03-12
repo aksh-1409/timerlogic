@@ -121,7 +121,7 @@ const ViewRecords = ({ onBack, theme }) => {
     setLoading(true);
     try {
       const response = await fetch(
-        `http://localhost:3000/api/view-records/students?semester=${selectedSemester}&branch=${encodeURIComponent(selectedBranch)}`
+        `http://192.168.1.8:3000/api/view-records/students?semester=${selectedSemester}&branch=${encodeURIComponent(selectedBranch)}`
       );
       const data = await response.json();
       if (data.success) {

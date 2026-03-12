@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet, Text, View, TouchableOpacity, ActivityIndicator,
-  Animated, TextInput, ScrollView, FlatList, AppState, useColorScheme, Image, Modal, RefreshControl, PermissionsAndroid, Platform
+  Animated, TextInput, ScrollView, FlatList, AppState, useColorScheme, Image, Modal, RefreshControl, PermissionsAndroid, Platform, Alert
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -36,11 +36,13 @@ import TestBSSID from './TestBSSID';
 // SECURITY FIX: Import unified timer manager
 import { useUnifiedTimer } from './UnifiedTimerManager';
 import SecurityStatusIndicator from './SecurityStatusIndicator';
+// Offline Timer Service Integration
+import OfflineTimerService from './OfflineTimerService';
 // WiFi BSSID Integration from LetsBunk
 
 // Configuration - Using computer IP for mobile device testing
-const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.6:3000/api/config';
-const SOCKET_URL = process.env.EXPO_PUBLIC_SOCKET_URL || 'http://192.168.1.6:3000';
+const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.8:3000/api/config';
+const SOCKET_URL = process.env.EXPO_PUBLIC_SOCKET_URL || 'http://192.168.1.8:3000';
 
 // Constants
 const CACHE_KEY = '@timer_config';
@@ -258,6 +260,15 @@ export default function App() {
     expectedBSSID: 'N/A',
     room: 'N/A',
     lastChecked: null
+  });
+
+  // Offline Timer states
+  const [offlineTimerState, setOfflineTimerState] = useState({
+    isOnline: true,
+    lastSyncTime: null,
+    syncQueue: [],
+    timerSeconds: 0,
+    pendingRandomRing: null
   });
 
   // Auto-check WiFi status (background only - no debug display)
@@ -781,6 +792,134 @@ export default function App() {
       subscription.remove();
     };
   }, [isRunning, selectedRole]);
+
+  // Initialize Offline Timer Service for students
+  useEffect(() => {
+    if (selectedRole === 'student' && studentId && !showLogin) {
+      console.log('🔧 Initializing Offline Timer Service...');
+      console.log('   Student ID:', studentId);
+      console.log('   Server URL:', SOCKET_URL);
+      
+      OfflineTimerService.initialize(studentId, SOCKET_URL)
+        .then(success => {
+          if (success) {
+            console.log('✅ Offline Timer Service initialized successfully');
+            
+            // Get initial state
+            const state = OfflineTimerService.getState();
+            setOfflineTimerState({
+              isOnline: state.isOnline,
+              lastSyncTime: state.lastSyncTime,
+              syncQueue: state.syncQueue || [],
+              timerSeconds: state.timerSeconds,
+              pendingRandomRing: state.pendingRandomRing || null
+            });
+          } else {
+            console.warn('⚠️ Offline Timer Service initialization failed');
+          }
+        })
+        .catch(error => {
+          console.error('❌ Error initializing Offline Timer Service:', error);
+        });
+    }
+    
+    return () => {
+      if (selectedRole === 'student') {
+        console.log('🧹 Cleaning up Offline Timer Service...');
+        OfflineTimerService.cleanup();
+      }
+    };
+  }, [selectedRole, studentId, showLogin]);
+
+  // Listen to Offline Timer events
+  useEffect(() => {
+    if (selectedRole !== 'student' || !studentId) return;
+    
+    console.log('👂 Setting up Offline Timer event listeners...');
+    
+    const unsubscribe = OfflineTimerService.addListener((event) => {
+      console.log('📡 Offline Timer Event:', event.type);
+      
+      switch (event.type) {
+        case 'timer_tick':
+          // Update display time
+          setDisplayTime(event.timerSeconds);
+          setOfflineTimerState(prev => ({
+            ...prev,
+            timerSeconds: event.timerSeconds
+          }));
+          break;
+          
+        case 'timer_started':
+          console.log('✅ Timer started event received');
+          setIsRunning(true);
+          setDisplayTime(event.timerSeconds);
+          break;
+          
+        case 'timer_stopped':
+          console.log('⏹️ Timer stopped event received:', event.reason);
+          setIsRunning(false);
+          Alert.alert('Timer Stopped', `Reason: ${event.reason}`);
+          break;
+          
+        case 'timer_paused':
+          console.log('⏸️ Timer paused event received:', event.reason);
+          setIsRunning(false);
+          Alert.alert('Timer Paused', `Reason: ${event.reason}`);
+          break;
+          
+        case 'timer_resumed':
+          console.log('▶️ Timer resumed event received:', event.reason);
+          setIsRunning(true);
+          break;
+          
+        case 'missed_random_ring':
+          console.log('🔔 Missed random ring detected!');
+          // Update state to show pending random ring
+          setOfflineTimerState(prev => ({
+            ...prev,
+            pendingRandomRing: event.randomRing
+          }));
+          // Show random ring dialog
+          setRandomRingDialogOpen(true);
+          setActiveRandomRing(event.randomRing);
+          Alert.alert(
+            '🔔 Random Ring Verification',
+            'Please verify your presence within 1 minute!',
+            [
+              { 
+                text: 'Verify Now', 
+                onPress: () => handleRandomRingResponse('present') 
+              }
+            ]
+          );
+          break;
+          
+        case 'bssid_unauthorized':
+          console.warn('⚠️ BSSID unauthorized - timer stopped');
+          Alert.alert(
+            '📶 WiFi Changed',
+            'Timer stopped - You are no longer in the authorized classroom WiFi.',
+            [{ text: 'OK' }]
+          );
+          break;
+      }
+      
+      // Update offline timer state
+      const state = OfflineTimerService.getState();
+      setOfflineTimerState({
+        isOnline: state.isOnline,
+        lastSyncTime: state.lastSyncTime,
+        syncQueue: state.syncQueue || [],
+        timerSeconds: state.timerSeconds,
+        pendingRandomRing: state.pendingRandomRing || null
+      });
+    });
+    
+    console.log('✅ Offline Timer event listeners set up');
+    
+    return unsubscribe;
+  }, [selectedRole, studentId]);
 
   const setupSocket = () => {
     console.log('🔌🔌🔌 setupSocket() called - Initializing socket connection...');
@@ -2099,11 +2238,11 @@ export default function App() {
 
     // Check if there's an active class
     if (!currentClassInfo) {
-      alert('❌ No Active Class\n\nNo lecture is currently scheduled.\n\nPlease wait for the next lecture to start.');
+      Alert.alert('❌ No Active Class', 'No lecture is currently scheduled.\n\nPlease wait for the next lecture to start.');
       return;
     }
 
-    console.log('🔒 Starting attendance validation process...');
+    console.log('🔒 Starting attendance with Offline Timer Service...');
 
     // Step 0: Check and request location permissions FIRST
     console.log('🔐 Step 0: Checking location permissions...');
@@ -2138,7 +2277,7 @@ export default function App() {
 
         if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
           console.log('❌ Location permission denied');
-          alert('❌ Permission Required\n\nLocation permission is required for WiFi-based attendance verification.\n\nPlease grant permission in device settings to continue.');
+          Alert.alert('❌ Permission Required', 'Location permission is required for WiFi-based attendance verification.\n\nPlease grant permission in device settings to continue.');
           return;
         }
 
@@ -2148,69 +2287,138 @@ export default function App() {
       }
     }
 
-    // CRITICAL: WiFi + Face verification required to start timer
-    // This prevents students from faking attendance from home
-
-    // 1. Check WiFi connection first (ASYNC)
-    console.log('📶 Step 1: Validating WiFi connection...');
-    const wifiValid = await isConnectedToClassroomWiFi();
-    if (!wifiValid) {
-      // Check if it's a simulated bypass
-      if (wifiDebugInfo.status === 'AUTHORIZED (SIMULATED)') {
-        console.log('🧪 WiFi bypass is active, proceeding...');
-      } else {
-        alert('❌ WiFi Validation Failed\n\nYou must be connected to the classroom WiFi to start attendance tracking.\n\nPlease connect to the authorized classroom network and try again.\n\n💡 Tip: If you\'re having WiFi issues, use the "Bypass WiFi Check" button for testing.');
-        return;
-      }
-    }
-
-    console.log('✅ All validations passed - Starting timer');
-    console.log('   ✅ WiFi: Connected to classroom network');
-    console.log('   ✅ Class: Active lecture in progress');
-
-    setIsRunning(true);
-
-    if (socketRef.current && socketRef.current.connected) {
-      socketRef.current.emit('start_timer', {
-        studentId,
-        enrollmentNo: userData?.enrollmentNo,
-        name: studentName,
-        semester,
-        branch,
-        currentClass: currentClassInfo?.subject,
-        lectureDuration: currentClassInfo?.duration || 60,
-        wifiValidated: true,
-        faceVerified: true,
-        validationTimestamp: new Date().toISOString()
+    // Start timer using Offline Timer Service (includes BSSID validation)
+    try {
+      console.log('▶️ Starting Offline Timer with lecture info:', {
+        subject: currentClassInfo.subject,
+        room: currentClassInfo.room,
+        startTime: currentClassInfo.startTime,
+        endTime: currentClassInfo.endTime
       });
-      console.log('⏱️ Sent start_timer to server with full validations');
-    } else {
-      console.warn('⚠️ Socket not connected, cannot start centralized timer');
-      // Don't allow offline timer without server validation
-      alert('❌ Server Connection Required\n\nServer connection is required for attendance tracking.\n\nPlease check your internet connection.');
-      setIsRunning(false);
+
+      const result = await OfflineTimerService.startTimer({
+        subject: currentClassInfo.subject,
+        teacher: currentClassInfo.teacher || 'Unknown',
+        room: currentClassInfo.room,
+        startTime: currentClassInfo.startTime,
+        endTime: currentClassInfo.endTime
+      });
+
+      if (result.success) {
+        console.log('✅ Offline Timer started successfully');
+        setIsRunning(true);
+        setDisplayTime(result.timerSeconds);
+
+        if (result.isNewLecture) {
+          Alert.alert('New Lecture', 'Timer started for new lecture');
+        } else {
+          Alert.alert('Continuing', 'Timer continues from previous value');
+        }
+
+        // Also notify server via socket if connected
+        if (socketRef.current && socketRef.current.connected) {
+          socketRef.current.emit('start_timer', {
+            studentId,
+            enrollmentNo: userData?.enrollmentNo,
+            name: studentName,
+            semester,
+            branch,
+            currentClass: currentClassInfo?.subject,
+            lectureDuration: currentClassInfo?.duration || 60,
+            wifiValidated: true,
+            validationTimestamp: new Date().toISOString()
+          });
+          console.log('⏱️ Notified server of timer start');
+        }
+      } else {
+        console.error('❌ Failed to start timer:', result.error);
+        Alert.alert('Cannot Start Timer', result.error || 'Failed to start timer');
+      }
+    } catch (error) {
+      console.error('❌ Error starting timer:', error);
+      Alert.alert('Error', 'Failed to start timer: ' + error.message);
     }
   };
 
   // Face verification functions removed - no longer needed
 
-  const handleReset = () => {
+  const handleReset = async () => {
     // Reset stops the timer
-    setIsRunning(false);
-    // Face verification removed - no longer needed
-    clearInterval(intervalRef.current);
+    console.log('⏹️ Stopping timer...');
+    
+    try {
+      const result = await OfflineTimerService.stopTimer('manual');
+      
+      if (result.success) {
+        console.log('✅ Timer stopped successfully');
+        setIsRunning(false);
+        
+        // Also notify server via socket if connected
+        if (socketRef.current && socketRef.current.connected) {
+          console.log('⏹️ Notifying server of timer stop...');
+          socketRef.current.emit('stop_timer', {
+            studentId: studentId,
+            enrollmentNo: userData?.enrollmentNo
+          });
+          console.log('⏹️ Sent stop_timer to server');
+        }
+      } else {
+        console.error('❌ Failed to stop timer:', result.error);
+      }
+    } catch (error) {
+      console.error('❌ Error stopping timer:', error);
+      setIsRunning(false);
+    }
+  };
 
-    // Stop timer using server-side system
-    if (socketRef.current && socketRef.current.connected) {
-      console.log('⏹️  Stopping server-side timer...');
-      socketRef.current.emit('stop_timer', {
-        studentId: studentId,
-        enrollmentNo: userData?.enrollmentNo
+  // Random Ring Response Handler
+  const handleRandomRingResponse = async (response) => {
+    try {
+      if (!activeRandomRing) {
+        Alert.alert('Error', 'No active random ring');
+        return;
+      }
+
+      console.log('🔔 Responding to random ring:', activeRandomRing.id);
+
+      const result = await fetch(`${SOCKET_URL}/api/attendance/random-ring-response`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          studentId: studentId,
+          randomRingId: activeRandomRing.id,
+          response: response,
+          timestamp: Date.now()
+        })
       });
-      console.log('⏹️ Sent stop_timer to server');
-    } else {
-      // Fallback to old method
-      updateTimerOnServer(0, false, 'absent');
+
+      const data = await result.json();
+
+      if (data.success) {
+        console.log('✅ Random ring response successful');
+        Alert.alert('✅ Verified', 'Your presence has been verified!');
+        setRandomRingDialogOpen(false);
+        setActiveRandomRing(null);
+        // Clear pending random ring from offline timer state
+        setOfflineTimerState(prev => ({
+          ...prev,
+          pendingRandomRing: null
+        }));
+      } else {
+        console.error('❌ Random ring response failed:', data.error);
+        Alert.alert('❌ Failed', data.error || 'Verification failed - Marked absent');
+        setRandomRingDialogOpen(false);
+        setActiveRandomRing(null);
+        setIsRunning(false);
+        // Clear pending random ring from offline timer state
+        setOfflineTimerState(prev => ({
+          ...prev,
+          pendingRandomRing: null
+        }));
+      }
+    } catch (error) {
+      console.error('❌ Error responding to random ring:', error);
+      Alert.alert('Error', 'Failed to send response');
     }
   };
 
@@ -4303,6 +4511,142 @@ export default function App() {
                   </TouchableOpacity>
                 </View>
               )}
+
+              {/* Offline Timer Status Indicators */}
+              <View style={{
+                width: '100%',
+                maxWidth: 400,
+                marginTop: 15,
+                gap: 8,
+              }}>
+                {/* Connection Status Indicator */}
+                <View style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  paddingHorizontal: 16,
+                  paddingVertical: 8,
+                  backgroundColor: offlineTimerState.isOnline ? '#10b981' + '15' : '#f59e0b' + '15',
+                  borderRadius: 20,
+                  borderWidth: 1,
+                  borderColor: offlineTimerState.isOnline ? '#10b981' : '#f59e0b',
+                }}>
+                  <Text style={{
+                    fontSize: 12,
+                    fontWeight: '600',
+                    color: offlineTimerState.isOnline ? '#10b981' : '#f59e0b',
+                    marginRight: 6,
+                  }}>
+                    {offlineTimerState.isOnline ? '🟢' : '🟡'}
+                  </Text>
+                  <Text style={{
+                    fontSize: 12,
+                    fontWeight: '600',
+                    color: offlineTimerState.isOnline ? '#10b981' : '#f59e0b',
+                  }}>
+                    {offlineTimerState.isOnline ? 'Online Mode' : 'Offline Mode'}
+                  </Text>
+                  {!offlineTimerState.isOnline && (
+                    <Text style={{
+                      fontSize: 10,
+                      color: '#f59e0b',
+                      marginLeft: 8,
+                    }}>
+                      Timer running locally
+                    </Text>
+                  )}
+                </View>
+
+                {/* Sync Queue Indicator */}
+                {offlineTimerState.syncQueue && offlineTimerState.syncQueue.length > 0 && (
+                  <View style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    paddingHorizontal: 16,
+                    paddingVertical: 6,
+                    backgroundColor: '#3b82f6' + '15',
+                    borderRadius: 16,
+                    borderWidth: 1,
+                    borderColor: '#3b82f6',
+                  }}>
+                    <Text style={{
+                      fontSize: 11,
+                      fontWeight: '600',
+                      color: '#3b82f6',
+                      marginRight: 6,
+                    }}>
+                      📤
+                    </Text>
+                    <Text style={{
+                      fontSize: 11,
+                      fontWeight: '600',
+                      color: '#3b82f6',
+                    }}>
+                      {offlineTimerState.syncQueue.length} pending sync{offlineTimerState.syncQueue.length !== 1 ? 's' : ''}
+                    </Text>
+                  </View>
+                )}
+
+                {/* Last Sync Time */}
+                {offlineTimerState.lastSyncTime && (
+                  <View style={{
+                    alignItems: 'center',
+                    paddingHorizontal: 12,
+                    paddingVertical: 4,
+                  }}>
+                    <Text style={{
+                      fontSize: 10,
+                      color: theme.textSecondary,
+                      textAlign: 'center',
+                    }}>
+                      Last sync: {new Date(offlineTimerState.lastSyncTime).toLocaleTimeString()}
+                    </Text>
+                  </View>
+                )}
+
+                {/* Random Ring Response Indicator */}
+                {offlineTimerState.pendingRandomRing && (
+                  <View style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    paddingHorizontal: 16,
+                    paddingVertical: 10,
+                    backgroundColor: '#ef4444' + '15',
+                    borderRadius: 20,
+                    borderWidth: 1,
+                    borderColor: '#ef4444',
+                    marginTop: 4,
+                  }}>
+                    <Text style={{
+                      fontSize: 12,
+                      fontWeight: '600',
+                      color: '#ef4444',
+                      marginRight: 8,
+                    }}>
+                      🔔 Random Ring Response Required!
+                    </Text>
+                    <TouchableOpacity
+                      style={{
+                        paddingHorizontal: 12,
+                        paddingVertical: 6,
+                        backgroundColor: '#ef4444',
+                        borderRadius: 12,
+                      }}
+                      onPress={() => handleRandomRingResponse('present')}
+                    >
+                      <Text style={{
+                        fontSize: 11,
+                        fontWeight: '600',
+                        color: 'white',
+                      }}>
+                        Respond
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
             </>
           ) : (
             <View style={{

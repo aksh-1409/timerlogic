@@ -62,8 +62,8 @@
         document.getElementById('currentUrl').textContent = currentUrl;
 
         function resetToLocalhost() {
-            localStorage.setItem('serverUrl', 'http://localhost:3000');
-            showStatus('✅ Server URL reset to http://localhost:3000', 'success');
+            localStorage.setItem('serverUrl', 'http://192.168.1.8:3000');
+            showStatus('✅ Server URL reset to http://192.168.1.8:3000', 'success');
             setTimeout(() => {
                 window.location.reload();
             }, 1500);
@@ -78,7 +78,7 @@
         }
 
         async function testConnection() {
-            const serverUrl = localStorage.getItem('serverUrl') || 'http://localhost:3000';
+            const serverUrl = localStorage.getItem('serverUrl') || 'http://192.168.1.8:3000';
             showStatus('🔄 Testing connection to ' + serverUrl + '...', '');
             
             try {

@@ -8,7 +8,7 @@ if (savedUrl && savedUrl.includes('render.com')) {
     console.log('🔄 Resetting old Render URL to localhost');
     localStorage.setItem('serverUrl', 'http://localhost:3000');
 }
-let SERVER_URL = localStorage.getItem('serverUrl') || 'http://localhost:3000';
+let SERVER_URL = localStorage.getItem('serverUrl') || 'http://192.168.1.8:3000';
 
 console.log('🌐 Admin Panel Server URL:', SERVER_URL);
 

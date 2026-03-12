@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 require('dotenv').config();
 
 // MongoDB connection
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/attendance_app';
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/letsbunk';
 
 console.log('🔌 Connecting to:', MONGODB_URI);
 

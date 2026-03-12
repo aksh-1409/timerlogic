@@ -143,7 +143,7 @@ if (!fs.existsSync(uploadsDir)) {
 app.use('/uploads', express.static(uploadsDir));
 
 // MongoDB Connection with proper pool configuration
-const MONGO_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/attendance_app';
+const MONGO_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/letsbunk';
 mongoose.connect(MONGO_URI, {
     serverSelectionTimeoutMS: 30000,
     socketTimeoutMS: 45000,
@@ -3437,7 +3437,12 @@ const loginLimiter = rateLimit({
     // Use user ID instead of IP address for rate limiting
     keyGenerator: (req) => {
         // Use the login ID (student enrollment or teacher employee ID) as the key
-        return req.body.id || req.ip; // Fallback to IP if no ID provided
+        const userId = req.body.id;
+        if (userId) {
+            return `user:${userId}`;
+        }
+        // Use express-rate-limit's built-in IP handling for IPv6 compatibility
+        return req.ip;
     },
     // Skip rate limiting for successful logins
     skipSuccessfulRequests: true,
@@ -4749,26 +4754,31 @@ app.post('/api/attendance/timer-paused', async (req, res) => {
     }
 });
 
-// Offline attendance sync endpoint
-app.post('/api/attendance/sync-offline', async (req, res) => {
+// Offline attendance sync endpoint (Enhanced for 2-minute sync interval)
+app.post('/api/attendance/offline-sync', async (req, res) => {
     try {
         const {
-            studentId, studentName, semester, branch,
-            offlineStartTime, offlineEndTime, totalOfflineSeconds,
-            lastKnownOnlineSeconds, currentLecture, events, syncTimestamp
+            studentId,
+            timerSeconds,
+            lecture,
+            timestamp,
+            isRunning,
+            isPaused
         } = req.body;
 
-        console.log('🔄 Syncing offline attendance:', {
+        console.log('🔄 Syncing offline timer:', {
             studentId,
-            offlineMinutes: Math.floor(totalOfflineSeconds / 60),
-            eventCount: events?.length || 0
+            timerSeconds,
+            lecture: lecture?.subject,
+            isRunning,
+            isPaused
         });
 
-        // Validate offline session
-        if (!studentId || !offlineStartTime || !offlineEndTime) {
+        // Validate required fields
+        if (!studentId || timerSeconds === undefined) {
             return res.status(400).json({
                 success: false,
-                error: 'Missing required offline session data'
+                error: 'Missing required sync data'
             });
         }
 
@@ -4787,134 +4797,126 @@ app.post('/api/attendance/sync-offline', async (req, res) => {
             });
         }
 
-        // CRITICAL: Check for failed random ring during offline period
-        let acceptedSeconds = totalOfflineSeconds;
-        let rejectionReason = null;
-
-        const session = student.attendanceSession;
-        if (session && session.randomRingPassed === false) {
-            // Random ring FAILED - apply timer cutoff
-            const randomRingTime = new Date(session.randomRingTime).getTime();
-            const offlineStart = new Date(offlineStartTime).getTime();
-            const offlineEnd = new Date(offlineEndTime).getTime();
-
-            // If offline period includes or is after failed random ring
-            if (offlineEnd > randomRingTime && randomRingTime >= offlineStart) {
-                // Only count time until random ring
-                const timeUntilRandomRing = Math.floor((randomRingTime - offlineStart) / 1000);
-                acceptedSeconds = Math.max(0, timeUntilRandomRing);
-                rejectionReason = 'random_ring_failed_cutoff';
-
-                console.log(`❌ Random ring cutoff applied for ${studentName}:`);
-                console.log(`   Random ring time: ${new Date(randomRingTime).toISOString()}`);
-                console.log(`   Offline start: ${new Date(offlineStart).toISOString()}`);
-                console.log(`   Offline end: ${new Date(offlineEnd).toISOString()}`);
-                console.log(`   Original offline: ${Math.floor(totalOfflineSeconds / 60)} min`);
-                console.log(`   Accepted (until random ring): ${Math.floor(acceptedSeconds / 60)} min`);
-            } else if (offlineStart >= randomRingTime) {
-                // Entire offline period is after failed random ring - reject all
-                acceptedSeconds = 0;
-                rejectionReason = 'random_ring_failed_all_rejected';
-
-                console.log(`❌ All offline time rejected - after failed random ring`);
-            }
+        // Initialize attendance session if not exists
+        if (!student.attendanceSession) {
+            student.attendanceSession = {
+                totalAttendedSeconds: 0,
+                currentLecture: null,
+                lastSyncTime: null,
+                offlineSyncs: [],
+                randomRings: []
+            };
         }
 
-        // Apply other business rules only if not already cut off by random ring
-        if (rejectionReason !== 'random_ring_failed_cutoff' && rejectionReason !== 'random_ring_failed_all_rejected') {
-            // Business rule: Maximum 2 hours offline per session
-            const maxOfflineSeconds = 2 * 60 * 60; // 2 hours
-            if (totalOfflineSeconds > maxOfflineSeconds) {
-                acceptedSeconds = maxOfflineSeconds;
-                rejectionReason = 'exceeded_max_offline_time';
-            }
-
-            // Business rule: Must have valid lecture during offline period
-            if (!currentLecture || !currentLecture.subject) {
-                acceptedSeconds = Math.floor(acceptedSeconds * 0.5); // 50% penalty
-                rejectionReason = 'no_valid_lecture';
-            }
-
-            // Business rule: Check for suspicious patterns in events
-            if (events && events.length > 0) {
-                const disconnectEvents = events.filter(e => e.type === 'wifi_disconnected').length;
-                const connectEvents = events.filter(e => e.type === 'wifi_connected').length;
-
-                // Too many WiFi toggles might indicate manipulation
-                if (disconnectEvents > 10 || Math.abs(disconnectEvents - connectEvents) > 5) {
-                    acceptedSeconds = Math.floor(acceptedSeconds * 0.7); // 30% penalty
-                    rejectionReason = 'suspicious_wifi_pattern';
+        // Check for missed random rings during offline period
+        let missedRandomRing = null;
+        
+        if (student.attendanceSession.randomRings && student.attendanceSession.randomRings.length > 0) {
+            // Find any random rings that occurred after last sync
+            const lastSyncTime = student.attendanceSession.lastSyncTime ? 
+                new Date(student.attendanceSession.lastSyncTime).getTime() : 0;
+            
+            const currentTime = Date.now();
+            
+            // Check if there's a pending random ring
+            const pendingRing = student.attendanceSession.randomRings.find(ring => {
+                const ringTime = new Date(ring.timestamp).getTime();
+                const ringExpiry = ringTime + (60 * 1000); // 1 minute expiry
+                
+                // Ring occurred after last sync and hasn't been responded to
+                return ringTime > lastSyncTime && 
+                       !ring.responded && 
+                       currentTime < ringExpiry;
+            });
+            
+            if (pendingRing) {
+                console.log('🔔 Missed random ring detected during offline period!');
+                console.log('   Ring time:', new Date(pendingRing.timestamp).toISOString());
+                console.log('   Current timer:', timerSeconds);
+                
+                // Check if timer seconds exceed random ring timestamp
+                // This means student was offline when ring was sent
+                const ringTimestamp = new Date(pendingRing.timestamp).getTime();
+                const syncTimestamp = timestamp || Date.now();
+                
+                if (syncTimestamp > ringTimestamp) {
+                    missedRandomRing = {
+                        id: pendingRing.id,
+                        timestamp: pendingRing.timestamp,
+                        expiresAt: ringTimestamp + (60 * 1000), // 1 minute from ring time
+                        message: 'Random ring verification required',
+                        lecture: pendingRing.lecture
+                    };
                 }
             }
         }
 
-        // Update student's attendance session
-        if (!student.attendanceSession) {
-            student.attendanceSession = {};
-        }
+        // Update timer value
+        student.attendanceSession.totalAttendedSeconds = timerSeconds;
+        student.attendanceSession.currentLecture = lecture;
+        student.attendanceSession.lastSyncTime = new Date(timestamp || Date.now());
+        student.attendanceSession.isRunning = isRunning;
+        student.attendanceSession.isPaused = isPaused;
 
-        // Add offline time to total attended seconds
-        const previousAttended = student.attendanceSession.totalAttendedSeconds || lastKnownOnlineSeconds || 0;
-        student.attendanceSession.totalAttendedSeconds = previousAttended + acceptedSeconds;
-
-        // Log offline sync event
+        // Log sync event
         if (!student.attendanceSession.offlineSyncs) {
             student.attendanceSession.offlineSyncs = [];
         }
 
         student.attendanceSession.offlineSyncs.push({
-            syncTimestamp: new Date(syncTimestamp),
-            offlineStartTime: new Date(offlineStartTime),
-            offlineEndTime: new Date(offlineEndTime),
-            totalOfflineSeconds: totalOfflineSeconds,
-            acceptedSeconds: acceptedSeconds,
-            rejectionReason: rejectionReason,
-            currentLecture: currentLecture,
-            eventCount: events?.length || 0,
-            randomRingCutoff: rejectionReason?.includes('random_ring') || false
+            syncTime: new Date(timestamp || Date.now()),
+            timerSeconds: timerSeconds,
+            lecture: lecture,
+            isRunning: isRunning,
+            isPaused: isPaused,
+            missedRandomRing: missedRandomRing ? true : false
         });
 
-        // Keep only last 10 offline syncs
-        if (student.attendanceSession.offlineSyncs.length > 10) {
-            student.attendanceSession.offlineSyncs = student.attendanceSession.offlineSyncs.slice(-10);
+        // Keep only last 20 syncs
+        if (student.attendanceSession.offlineSyncs.length > 20) {
+            student.attendanceSession.offlineSyncs = student.attendanceSession.offlineSyncs.slice(-20);
         }
 
         await student.save();
 
-        console.log(`✅ Offline sync completed for ${studentName}:`);
-        console.log(`   Total offline: ${Math.floor(totalOfflineSeconds / 60)} minutes`);
-        console.log(`   Accepted: ${Math.floor(acceptedSeconds / 60)} minutes`);
-        console.log(`   Reason: ${rejectionReason || 'full_acceptance'}`);
+        console.log(`✅ Offline sync completed for ${student.name}:`);
+        console.log(`   Timer: ${Math.floor(timerSeconds / 60)} minutes ${timerSeconds % 60} seconds`);
+        console.log(`   Lecture: ${lecture?.subject || 'None'}`);
+        console.log(`   Missed ring: ${missedRandomRing ? 'YES' : 'NO'}`);
 
         // Broadcast updated attendance to teachers
         io.emit('student_update', {
             studentId: student._id,
             enrollmentNo: student.enrollmentNo,
             name: student.name,
-            status: 'present',
-            isRunning: false,
-            timerValue: student.attendanceSession.totalAttendedSeconds,
-            offlineSync: {
-                totalOfflineSeconds,
-                acceptedSeconds,
-                rejectionReason
-            }
+            status: isRunning ? 'attending' : 'present',
+            isRunning: isRunning,
+            timerValue: timerSeconds,
+            currentLecture: lecture,
+            lastSync: new Date(timestamp || Date.now())
         });
+
+        // Notify teacher if student is offline
+        if (!isRunning && !isPaused) {
+            io.emit('student_offline', {
+                studentId: student._id,
+                enrollmentNo: student.enrollmentNo,
+                name: student.name,
+                lastSyncTime: new Date(timestamp || Date.now())
+            });
+        }
 
         res.json({
             success: true,
-            acceptedSeconds: acceptedSeconds,
-            totalOfflineSeconds: totalOfflineSeconds,
-            rejectionReason: rejectionReason,
-            newTotalSeconds: student.attendanceSession.totalAttendedSeconds,
-            message: rejectionReason ?
-                `Offline time partially accepted: ${rejectionReason}` :
-                'Offline time fully accepted',
-            randomRingCutoff: rejectionReason?.includes('random_ring') || false
+            timerSeconds: timerSeconds,
+            missedRandomRing: missedRandomRing,
+            message: missedRandomRing ? 
+                'Sync successful - Random ring verification required' : 
+                'Sync successful'
         });
 
     } catch (error) {
-        console.error('❌ Error syncing offline attendance:', error);
+        console.error('❌ Error syncing offline timer:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
@@ -4964,6 +4966,169 @@ app.post('/api/attendance/timer-resumed', async (req, res) => {
         res.json({ success: true, message: 'Timer resumed' });
     } catch (error) {
         console.error('❌ Error handling timer resume:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Random Ring Response Endpoint (for delayed responses after reconnection)
+app.post('/api/attendance/random-ring-response', async (req, res) => {
+    try {
+        const { studentId, randomRingId, response, timestamp } = req.body;
+
+        console.log('🔔 Random ring response received:', {
+            studentId,
+            randomRingId,
+            response,
+            timestamp
+        });
+
+        // Validate required fields
+        if (!studentId || !randomRingId || !response) {
+            return res.status(400).json({
+                success: false,
+                error: 'Missing required fields'
+            });
+        }
+
+        // Find student
+        const student = await StudentManagement.findOne({
+            $or: [
+                { _id: mongoose.Types.ObjectId.isValid(studentId) ? studentId : null },
+                { enrollmentNo: studentId }
+            ].filter(query => query._id !== null || query.enrollmentNo)
+        });
+
+        if (!student) {
+            return res.status(404).json({
+                success: false,
+                error: 'Student not found'
+            });
+        }
+
+        // Find the random ring
+        if (!student.attendanceSession || !student.attendanceSession.randomRings) {
+            return res.status(404).json({
+                success: false,
+                error: 'No random ring found'
+            });
+        }
+
+        const randomRing = student.attendanceSession.randomRings.find(
+            ring => ring.id === randomRingId
+        );
+
+        if (!randomRing) {
+            return res.status(404).json({
+                success: false,
+                error: 'Random ring not found'
+            });
+        }
+
+        // Check if already responded
+        if (randomRing.responded) {
+            return res.status(400).json({
+                success: false,
+                error: 'Already responded to this random ring'
+            });
+        }
+
+        // Check if expired (1 minute from ring time)
+        const ringTime = new Date(randomRing.timestamp).getTime();
+        const responseTime = new Date(timestamp || Date.now()).getTime();
+        const timeDiff = responseTime - ringTime;
+
+        if (timeDiff > 60000) { // 1 minute
+            // Expired - mark as absent
+            randomRing.responded = true;
+            randomRing.responseTime = new Date(timestamp || Date.now());
+            randomRing.responseStatus = 'expired';
+            randomRing.timeTaken = timeDiff;
+
+            // Mark student as absent for this lecture
+            student.attendanceSession.randomRingPassed = false;
+            student.status = 'absent';
+
+            await student.save();
+
+            console.log(`❌ Random ring expired for ${student.name} - Marked ABSENT`);
+
+            // Notify teacher
+            io.emit('random_ring_failed', {
+                studentId: student._id,
+                enrollmentNo: student.enrollmentNo,
+                name: student.name,
+                randomRingId: randomRingId,
+                reason: 'expired',
+                timeTaken: timeDiff
+            });
+
+            return res.json({
+                success: false,
+                error: 'Random ring expired - Marked absent',
+                timeTaken: timeDiff,
+                status: 'absent'
+            });
+        }
+
+        // Valid response within time limit
+        randomRing.responded = true;
+        randomRing.responseTime = new Date(timestamp || Date.now());
+        randomRing.responseStatus = response === 'present' ? 'success' : 'failed';
+        randomRing.timeTaken = timeDiff;
+
+        if (response === 'present') {
+            // Student responded successfully
+            student.attendanceSession.randomRingPassed = true;
+            student.status = 'attending';
+
+            await student.save();
+
+            console.log(`✅ Random ring passed for ${student.name}`);
+
+            // Notify teacher
+            io.emit('random_ring_success', {
+                studentId: student._id,
+                enrollmentNo: student.enrollmentNo,
+                name: student.name,
+                randomRingId: randomRingId,
+                timeTaken: timeDiff
+            });
+
+            res.json({
+                success: true,
+                message: 'Random ring verification successful',
+                timeTaken: timeDiff,
+                status: 'present'
+            });
+        } else {
+            // Student failed to respond properly
+            student.attendanceSession.randomRingPassed = false;
+            student.status = 'absent';
+
+            await student.save();
+
+            console.log(`❌ Random ring failed for ${student.name} - Marked ABSENT`);
+
+            // Notify teacher
+            io.emit('random_ring_failed', {
+                studentId: student._id,
+                enrollmentNo: student.enrollmentNo,
+                name: student.name,
+                randomRingId: randomRingId,
+                reason: 'failed_response',
+                timeTaken: timeDiff
+            });
+
+            res.json({
+                success: false,
+                error: 'Random ring verification failed - Marked absent',
+                timeTaken: timeDiff,
+                status: 'absent'
+            });
+        }
+
+    } catch (error) {
+        console.error('❌ Error handling random ring response:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
