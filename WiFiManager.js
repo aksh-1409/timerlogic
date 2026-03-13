@@ -157,8 +157,8 @@ class WiFiManager {
 
       // Check if native module is available
       if (!NativeWiFiService.isModuleAvailable()) {
-        console.warn('⚠️ Native WiFi module not available, using fallback');
-        return this.getFallbackBSSID();
+        console.error('❌ Native WiFi module not available');
+        return null;
       }
 
       // Use native WiFi service
@@ -189,30 +189,19 @@ class WiFiManager {
         } else if (result.code === 'NO_BSSID') {
           console.log('💡 Solution: Connect to a WiFi network');
         } else if (result.code === 'MODULE_NOT_AVAILABLE') {
-          console.log('💡 Solution: Native module not available, using fallback');
+          console.log('💡 Solution: Native module not available');
         }
 
-        // Return fallback for development
-        if (__DEV__) {
-          console.log('📱 Development mode: Using fallback BSSID');
-          return this.getFallbackBSSID();
-        }
-
+        // STRICT MODE: Return null on any failure
         return null;
       }
 
-      console.log('📶 No BSSID available - using fallback for development');
-      return this.getFallbackBSSID();
+      console.log('📶 No BSSID available');
+      return null;
 
     } catch (error) {
       console.error('❌ Error getting BSSID from native module:', error);
-
-      // In development, always return fallback
-      if (__DEV__) {
-        console.log('📱 Development mode: Using fallback BSSID due to error');
-        return this.getFallbackBSSID();
-      }
-
+      // STRICT MODE: Return null on error
       return null;
     }
   }
@@ -328,11 +317,10 @@ class WiFiManager {
    * Get fallback BSSID for development/testing
    */
   getFallbackBSSID() {
-    if (__DEV__) {
-      console.log('📶 Using development BSSID for testing');
-      return 'b4:86:18:6f:fb:ec'; // Example BSSID for testing
-    }
-    return null; // Production should return null if no real BSSID
+    // STRICT MODE: No fallback BSSIDs allowed
+    // Always return null to force real BSSID detection
+    console.log('📶 No fallback BSSID - requiring real WiFi detection');
+    return null;
   }
 
   /**
@@ -356,10 +344,18 @@ class WiFiManager {
     try {
       if (serverUrl) {
         console.log('📥 Fetching authorized BSSIDs from server...');
+        console.log('🌐 Server URL:', serverUrl);
 
         // Get classrooms with BSSID data
         const classroomResponse = await fetch(`${serverUrl}/api/classrooms`);
+        
+        if (!classroomResponse.ok) {
+          console.error('❌ Failed to fetch classrooms:', classroomResponse.status, classroomResponse.statusText);
+          throw new Error(`HTTP ${classroomResponse.status}: ${classroomResponse.statusText}`);
+        }
+        
         const classroomData = await classroomResponse.json();
+        console.log('📊 Classroom API response:', classroomData);
 
         if (classroomData.success && classroomData.classrooms) {
           this.authorizedBSSIDs = classroomData.classrooms
@@ -410,6 +406,15 @@ class WiFiManager {
           if (currentLectureRoom) {
             console.log(`🎯 Current lecture BSSID: ${currentLectureRoom.bssid} (${currentLectureRoom.roomNumber})`);
           }
+          
+          // If no BSSIDs loaded, show helpful message
+          if (this.authorizedBSSIDs.length === 0) {
+            console.log('⚠️ No classroom BSSIDs configured on server');
+            console.log('💡 To fix: Add classroom configurations in admin panel with WiFi BSSIDs');
+          }
+        } else {
+          console.error('❌ Invalid classroom API response:', classroomData);
+          throw new Error('Invalid classroom data received from server');
         }
       } else {
         // Load from cache
@@ -417,10 +422,28 @@ class WiFiManager {
         if (cached) {
           this.authorizedBSSIDs = JSON.parse(cached);
           console.log(`📱 Loaded ${this.authorizedBSSIDs.length} cached BSSIDs`);
+        } else {
+          console.log('📱 No cached BSSIDs found');
         }
       }
     } catch (error) {
       console.error('❌ Error loading authorized BSSIDs:', error);
+      console.log('🔧 Attempting to load from cache as fallback...');
+      
+      // Fallback to cache
+      try {
+        const cached = await AsyncStorage.getItem(AUTHORIZED_BSSIDS_KEY);
+        if (cached) {
+          this.authorizedBSSIDs = JSON.parse(cached);
+          console.log(`📱 Fallback: Loaded ${this.authorizedBSSIDs.length} cached BSSIDs`);
+        } else {
+          console.log('📱 No cached BSSIDs available');
+          this.authorizedBSSIDs = [];
+        }
+      } catch (cacheError) {
+        console.error('❌ Cache fallback failed:', cacheError);
+        this.authorizedBSSIDs = [];
+      }
     }
   }
 

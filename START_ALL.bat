@@ -52,7 +52,7 @@ echo.
 echo [4/4] Starting LetsBunk Server...
 echo.
 echo ========================================
-echo Server will start on http://localhost:3000
+echo Server will start on https://aprilbunk.onrender.com
 echo Press Ctrl+C to stop the server
 echo ========================================
 echo.

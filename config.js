@@ -8,8 +8,8 @@
 // ============================================
 // SERVER CONFIGURATION
 // ============================================
-// Update this URL to your backend server (using computer IP for mobile testing)
-export const SERVER_BASE_URL = 'http://192.168.1.8:3000';
+// Update this URL to your backend server (using production server)
+export const SERVER_BASE_URL = 'https://aprilbunk.onrender.com';
 
 // Derived URLs (automatically generated from SERVER_BASE_URL)
 export const API_URL = `${SERVER_BASE_URL}/api/config`;

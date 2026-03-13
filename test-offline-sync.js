@@ -17,7 +17,7 @@ const http = require('http');
 const https = require('https');
 
 const useLocal = process.argv.includes('--local');
-const SERVER_URL = 'http://localhost:3000'; // Always use localhost
+const SERVER_URL = 'https://aprilbunk.onrender.com'; // Production server
 
 const API = `${SERVER_URL}/api`;
 

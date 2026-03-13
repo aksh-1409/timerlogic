@@ -33,16 +33,15 @@ import Feedback from './Feedback';
 import SemesterSelector from './SemesterSelector';
 import WiFiManager from './WiFiManager';
 import TestBSSID from './TestBSSID';
-// SECURITY FIX: Import unified timer manager
-import { useUnifiedTimer } from './UnifiedTimerManager';
+// Removed UnifiedTimerManager - using OfflineTimerService instead
 import SecurityStatusIndicator from './SecurityStatusIndicator';
 // Offline Timer Service Integration
 import OfflineTimerService from './OfflineTimerService';
 // WiFi BSSID Integration from LetsBunk
 
-// Configuration - Using computer IP for mobile device testing
-const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.8:3000/api/config';
-const SOCKET_URL = process.env.EXPO_PUBLIC_SOCKET_URL || 'http://192.168.1.8:3000';
+// Configuration - Using production server URL
+const API_URL = process.env.EXPO_PUBLIC_API_URL || 'https://aprilbunk.onrender.com/api/config';
+const SOCKET_URL = process.env.EXPO_PUBLIC_SOCKET_URL || 'https://aprilbunk.onrender.com';
 
 // Constants
 const CACHE_KEY = '@timer_config';
@@ -171,24 +170,8 @@ export default function App() {
   const [semester, setSemester] = useState(null);
   const [branch, setBranch] = useState(null);
 
-  // SECURITY FIX: Use unified timer - single source of truth
-  const unifiedTimer = useUnifiedTimer(studentId, SOCKET_URL, {
-    semester: semester,
-    branch: branch,
-    subject: serverTimerData?.lectureSubject,
-    room: serverTimerData?.lectureRoom
-  });
-
-  // Extract timer state for UI (read-only)
-  const {
-    timerState,
-    startTimer,
-    stopTimer,
-    pauseTimer,
-    resumeTimer,
-    isSecure,
-    securityStatus
-  } = unifiedTimer;
+  // Using OfflineTimerService as primary timer system
+  // (UnifiedTimerManager removed to avoid conflicts)
 
   // Teacher-specific timetable states
   const [showTimetable, setShowTimetable] = useState(false);
@@ -830,6 +813,30 @@ export default function App() {
       }
     };
   }, [selectedRole, studentId, showLogin]);
+
+  // Update OfflineTimerService with student data when semester/branch are available
+  useEffect(() => {
+    if (selectedRole === 'student' && studentId && semester && branch) {
+      console.log('👤 Updating OfflineTimerService with student data...');
+      console.log('   Semester:', semester);
+      console.log('   Branch:', branch);
+      
+      OfflineTimerService.updateStudentData({
+        semester: semester,
+        branch: branch
+      })
+        .then(success => {
+          if (success) {
+            console.log('✅ Student data updated in OfflineTimerService');
+          } else {
+            console.warn('⚠️ Failed to update student data in OfflineTimerService');
+          }
+        })
+        .catch(error => {
+          console.error('❌ Error updating student data:', error);
+        });
+    }
+  }, [selectedRole, studentId, semester, branch]);
 
   // Listen to Offline Timer events
   useEffect(() => {
@@ -4213,11 +4220,11 @@ export default function App() {
       <View style={[styles.container, { backgroundColor: theme.background }]}>
         <StatusBar style={theme.statusBar} />
 
-        {/* SECURITY FIX: Security Status Indicator */}
+        {/* Security Status Indicator - Using Offline Timer State */}
         <SecurityStatusIndicator
-          isSecure={isSecure}
-          securityStatus={securityStatus}
-          timerState={timerState}
+          isSecure={offlineTimerState.isOnline}
+          securityStatus={offlineTimerState.isOnline ? 'secure' : 'offline'}
+          timerState={offlineTimerState}
           theme={theme}
         />
 
@@ -4390,6 +4397,9 @@ export default function App() {
                 }}
                 serverUrl={SOCKET_URL}
                 studentId={studentId}
+                // Add offline timer integration
+                offlineTimerState={offlineTimerState}
+                isOfflineMode={!offlineTimerState.isOnline}
                 onTimerPaused={(reason) => {
                   console.log('⏸️ Timer paused by WiFi system:', reason);
                   setIsRunning(false);

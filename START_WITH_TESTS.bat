@@ -13,7 +13,7 @@ node test-mongodb-connection.js
 echo.
 
 echo 📡 Step 3: Starting Server...
-echo Server URL: http://192.168.1.8:3000
+echo Server URL: https://aprilbunk.onrender.com
 echo MongoDB: mongodb://localhost:27017/letsbunk
 echo.
 echo ⏳ Starting server (Press Ctrl+C to stop)...

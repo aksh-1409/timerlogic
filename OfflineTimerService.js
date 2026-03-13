@@ -56,6 +56,10 @@ class OfflineTimerService {
       this.studentId = studentId;
       this.serverUrl = serverUrl;
       
+      // Initialize WiFiManager
+      console.log('📶 Initializing WiFiManager...');
+      await WiFiManager.initialize();
+      
       // Load saved state
       await this.loadState();
       
@@ -75,6 +79,27 @@ class OfflineTimerService {
       return true;
     } catch (error) {
       console.error('❌ Failed to initialize Offline Timer Service:', error);
+      return false;
+    }
+  }
+
+  // Method to update student data and load authorized BSSIDs
+  async updateStudentData(studentData) {
+    try {
+      console.log('👤 Updating student data for BSSID validation...');
+      console.log('   Student:', studentData);
+      
+      // Load authorized BSSIDs from server with student context
+      await WiFiManager.loadAuthorizedBSSIDs(this.serverUrl, {
+        studentId: this.studentId,
+        semester: studentData.semester,
+        branch: studentData.branch
+      });
+      
+      console.log('✅ Student data updated and BSSIDs loaded');
+      return true;
+    } catch (error) {
+      console.error('❌ Failed to update student data:', error);
       return false;
     }
   }
@@ -272,19 +297,66 @@ class OfflineTimerService {
    */
   async validateBSSID(roomNumber) {
     try {
-      console.log('📶 Validating BSSID for room:', roomNumber);
+      console.log('📶 STRICT BSSID Validation for room:', roomNumber);
       
       const result = await WiFiManager.isAuthorizedForRoom(roomNumber);
       
       console.log('📶 BSSID validation result:', result);
       
-      return result;
+      // STRICT VALIDATION: No bypasses allowed
+      if (!result.authorized) {
+        console.log('❌ BSSID validation FAILED - Timer will NOT start');
+        
+        // Provide specific error messages based on failure reason
+        let errorMessage = 'Timer cannot start - WiFi validation failed';
+        
+        switch (result.reason) {
+          case 'room_not_configured':
+            errorMessage = `Room ${roomNumber} is not configured with authorized WiFi. Please contact admin to configure classroom WiFi settings.`;
+            break;
+          case 'no_wifi':
+            errorMessage = 'No WiFi connection detected. Please connect to the classroom WiFi network.';
+            break;
+          case 'wrong_bssid':
+            errorMessage = `You are connected to wrong WiFi network. Please connect to the authorized classroom WiFi for room ${roomNumber}.`;
+            break;
+          case 'error':
+            errorMessage = `WiFi validation error: ${result.error}. Please check your WiFi connection and try again.`;
+            break;
+          default:
+            errorMessage = 'WiFi validation failed. Please ensure you are connected to the correct classroom WiFi.';
+        }
+        
+        return {
+          authorized: false,
+          reason: result.reason,
+          error: errorMessage,
+          currentBSSID: result.currentBSSID || 'Not detected',
+          expectedBSSID: result.expectedBSSID || 'Not configured',
+          roomInfo: result.roomInfo
+        };
+      }
+      
+      // Validation passed - timer can start
+      console.log('✅ BSSID validation PASSED - Timer authorized to start');
+      return {
+        authorized: true,
+        reason: 'authorized',
+        currentBSSID: result.currentBSSID,
+        expectedBSSID: result.expectedBSSID,
+        roomInfo: result.roomInfo
+      };
+      
     } catch (error) {
       console.error('❌ BSSID validation error:', error);
+      
+      // STRICT: No bypasses on error - validation fails
       return {
         authorized: false,
         reason: 'validation_error',
-        error: error.message
+        error: `WiFi validation failed: ${error.message}. Please check your connection and try again.`,
+        currentBSSID: 'Error',
+        expectedBSSID: 'Unknown'
       };
     }
   }

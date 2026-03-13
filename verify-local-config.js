@@ -11,7 +11,7 @@ const path = require('path');
 console.log('🔍 VERIFYING LOCAL CONFIGURATION');
 console.log('================================');
 
-const expectedIP = '192.168.1.8:3000';
+const expectedIP = 'https://aprilbunk.onrender.com';
 const expectedDB = 'mongodb://localhost:27017/letsbunk';
 
 const files = [

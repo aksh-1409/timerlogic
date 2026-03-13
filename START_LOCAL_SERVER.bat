@@ -3,9 +3,9 @@ echo ========================================
 echo 🚀 STARTING LETSBUNK LOCAL SERVER
 echo ========================================
 echo.
-echo 📡 Server URL: http://192.168.1.8:3000
-echo 🔌 WebSocket: ws://192.168.1.8:3000
-echo 👥 Admin Panel: http://192.168.1.8:3000
+echo 📡 Server URL: https://aprilbunk.onrender.com
+echo 🔌 WebSocket: wss://aprilbunk.onrender.com
+echo 👥 Admin Panel: https://aprilbunk.onrender.com
 echo.
 echo ⏳ Starting server...
 echo.

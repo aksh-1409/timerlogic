@@ -56,7 +56,7 @@ const server = http.createServer(app);
 // CORS Configuration - Restrict in production
 const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
     ? process.env.ALLOWED_ORIGINS.split(',')
-    : ['http://localhost:3000', 'http://localhost:8081'];
+    : ['https://aprilbunk.onrender.com', 'http://localhost:3000', 'http://localhost:8081'];
 
 const io = new Server(server, {
     cors: {

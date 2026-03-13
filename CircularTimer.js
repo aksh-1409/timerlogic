@@ -63,6 +63,9 @@ export default function CircularTimer({
   studentId = null,
   onTimerPaused = () => { },
   onTimerResumed = () => { },
+  // New offline timer props
+  offlineTimerState = null,
+  isOfflineMode = false,
 }) {
   const safeTheme = {
     primary: theme.primary || '#d97706',
@@ -676,6 +679,34 @@ export default function CircularTimer({
               return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
             })()}
           </Text>
+          
+          {/* Offline/Online Status Indicator */}
+          {isOfflineMode ? (
+            <View style={{ 
+              flexDirection: 'row', 
+              alignItems: 'center', 
+              backgroundColor: '#f59e0b20', 
+              paddingHorizontal: 8, 
+              paddingVertical: 2, 
+              borderRadius: 10, 
+              marginTop: 2 
+            }}>
+              <Text style={{ fontSize: 8, color: '#f59e0b', fontWeight: 'bold' }}>🟡 OFFLINE</Text>
+            </View>
+          ) : (
+            <View style={{ 
+              flexDirection: 'row', 
+              alignItems: 'center', 
+              backgroundColor: '#10b98120', 
+              paddingHorizontal: 8, 
+              paddingVertical: 2, 
+              borderRadius: 10, 
+              marginTop: 2 
+            }}>
+              <Text style={{ fontSize: 8, color: '#10b981', fontWeight: 'bold' }}>🟢 ONLINE</Text>
+            </View>
+          )}
+          
           <Text style={[styles.timeLabel, { color: safeTheme.textSecondary, fontSize: 10, marginTop: 3 }]}>
             LECTURE TIME
           </Text>
@@ -703,8 +734,16 @@ export default function CircularTimer({
 
           {/* Show running indicator when active */}
           {isRunning && (
-            <View style={[styles.runningBadge, { backgroundColor: '#22c55e', marginTop: 15 }]}>
-              <Text style={styles.runningText}>🔴 TRACKING</Text>
+            <View style={[
+              styles.runningBadge, 
+              { 
+                backgroundColor: isOfflineMode ? '#f59e0b' : '#22c55e', 
+                marginTop: 15 
+              }
+            ]}>
+              <Text style={styles.runningText}>
+                {isOfflineMode ? '🟡 OFFLINE TRACKING' : '🔴 ONLINE TRACKING'}
+              </Text>
             </View>
           )}
 
