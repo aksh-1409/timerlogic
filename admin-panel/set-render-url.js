@@ -1,7 +1,7 @@
 // Quick script to set Render URL in admin panel localStorage
 // Run this in the browser console when admin panel is open
 
-const RENDER_URL = 'http://localhost:3000';
+const RENDER_URL = 'https://aprilbunk.onrender.com';
 
 console.log('🔧 Setting server URL to:', RENDER_URL);
 localStorage.setItem('serverUrl', RENDER_URL);

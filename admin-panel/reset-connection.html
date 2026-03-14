@@ -58,12 +58,12 @@
 
     <script>
         // Display current URL
-        const currentUrl = localStorage.getItem('serverUrl') || 'http://localhost:3000 (default)';
+        const currentUrl = localStorage.getItem('serverUrl') || 'https://aprilbunk.onrender.com (default)';
         document.getElementById('currentUrl').textContent = currentUrl;
 
         function resetToLocalhost() {
-            localStorage.setItem('serverUrl', 'http://localhost:3000');
-            showStatus('✅ Server URL reset to http://localhost:3000', 'success');
+            localStorage.setItem('serverUrl', 'https://aprilbunk.onrender.com');
+            showStatus('✅ Server URL reset to https://aprilbunk.onrender.com', 'success');
             setTimeout(() => {
                 window.location.reload();
             }, 1500);
@@ -78,7 +78,7 @@
         }
 
         async function testConnection() {
-            const serverUrl = localStorage.getItem('serverUrl') || 'http://localhost:3000';
+            const serverUrl = localStorage.getItem('serverUrl') || 'https://aprilbunk.onrender.com';
             showStatus('🔄 Testing connection to ' + serverUrl + '...', '');
             
             try {

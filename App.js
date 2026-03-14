@@ -39,6 +39,8 @@ import BSSIDStorage from './BSSIDStorage';
 // Face Verification Module
 import FaceVerification from './FaceVerification';
 import CircularTimer from './CircularTimer';
+// Offline Timer Service
+import OfflineTimerService from './OfflineTimerService';
 
 // Configuration - Import from centralized config
 import { SERVER_BASE_URL, API_URL as CONFIG_API_URL, SOCKET_URL as CONFIG_SOCKET_URL } from './config';
@@ -154,6 +156,18 @@ export default function App() {
 
   // Timer state (deprecated - kept for compatibility with period-based system)
   const [isRunning] = useState(false); // Always false in period-based system
+
+  // Offline Timer Service state
+  const [offlineTimerState, setOfflineTimerState] = useState({
+    isRunning: false,
+    isPaused: false,
+    timerSeconds: 0,
+    currentLecture: null,
+    isOnline: true,
+    lastSyncTime: null,
+    queuedSyncs: 0
+  });
+  const [offlineTimerInitialized, setOfflineTimerInitialized] = useState(false);
 
   // Teacher-specific timetable states
   const [showTimetable, setShowTimetable] = useState(false);
@@ -695,6 +709,173 @@ export default function App() {
       subscription.remove();
     };
   }, [selectedRole]);
+
+  // Initialize OfflineTimerService when student logs in
+  useEffect(() => {
+    if (selectedRole === 'student' && studentId && !showLogin && !offlineTimerInitialized) {
+      const initializeOfflineTimer = async () => {
+        try {
+          console.log('🔧 Initializing OfflineTimerService for student:', studentId);
+          
+          const success = await OfflineTimerService.initialize(studentId, SOCKET_URL);
+          
+          if (success) {
+            // Update student data for BSSID validation
+            if (userData) {
+              await OfflineTimerService.updateStudentData({
+                semester: userData.semester,
+                branch: userData.branch
+              });
+            }
+            
+            // Setup event listeners
+            const unsubscribe = OfflineTimerService.addListener((event) => {
+              console.log('🔔 OfflineTimer event:', event.type);
+              
+              switch (event.type) {
+                case 'timer_tick':
+                  setOfflineTimerState(prev => ({
+                    ...prev,
+                    timerSeconds: event.timerSeconds
+                  }));
+                  break;
+                  
+                case 'timer_started':
+                  setOfflineTimerState(prev => ({
+                    ...prev,
+                    isRunning: true,
+                    isPaused: false,
+                    timerSeconds: event.timerSeconds,
+                    currentLecture: event.lecture
+                  }));
+                  break;
+                  
+                case 'timer_stopped':
+                  setOfflineTimerState(prev => ({
+                    ...prev,
+                    isRunning: false,
+                    isPaused: false,
+                    currentLecture: null
+                  }));
+                  break;
+                  
+                case 'timer_paused':
+                  setOfflineTimerState(prev => ({
+                    ...prev,
+                    isPaused: true
+                  }));
+                  break;
+                  
+                case 'timer_resumed':
+                  setOfflineTimerState(prev => ({
+                    ...prev,
+                    isPaused: false
+                  }));
+                  break;
+                  
+                case 'bssid_unauthorized':
+                case 'wifi_disconnected':
+                  Alert.alert(
+                    '📶 WiFi Issue',
+                    event.type === 'bssid_unauthorized' 
+                      ? 'You are no longer connected to the authorized classroom WiFi. Timer has been stopped.'
+                      : 'WiFi connection lost. Timer has been stopped.',
+                    [{ text: 'OK' }]
+                  );
+                  break;
+                  
+                case 'missed_random_ring':
+                  Alert.alert(
+                    '🔔 Random Ring Missed',
+                    'A random ring was triggered while you were offline. Please respond immediately.',
+                    [{ text: 'OK' }]
+                  );
+                  break;
+              }
+              
+              // Update state with current timer state
+              const currentState = OfflineTimerService.getState();
+              setOfflineTimerState(currentState);
+            });
+            
+            // Get initial state
+            const initialState = OfflineTimerService.getState();
+            setOfflineTimerState(initialState);
+            setOfflineTimerInitialized(true);
+            
+            console.log('✅ OfflineTimerService initialized successfully');
+            
+            // Cleanup function
+            return () => {
+              unsubscribe();
+              OfflineTimerService.cleanup();
+            };
+          } else {
+            console.error('❌ Failed to initialize OfflineTimerService');
+          }
+        } catch (error) {
+          console.error('❌ Error initializing OfflineTimerService:', error);
+        }
+      };
+      
+      initializeOfflineTimer();
+    }
+  }, [selectedRole, studentId, showLogin, userData, offlineTimerInitialized]);
+
+  // Handle timer start/stop based on current class
+  const handleTimerStartStop = async () => {
+    if (!offlineTimerInitialized || !currentClassInfo) {
+      Alert.alert(
+        '⚠️ Timer Not Available',
+        'Timer is not available. Please ensure you are in a scheduled class period.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+    
+    if (offlineTimerState.isRunning) {
+      // Stop timer
+      console.log('⏹️ Stopping timer manually');
+      const result = await OfflineTimerService.stopTimer('manual');
+      
+      if (!result.success) {
+        Alert.alert(
+          '❌ Error',
+          `Failed to stop timer: ${result.error}`,
+          [{ text: 'OK' }]
+        );
+      }
+    } else {
+      // Start timer
+      console.log('▶️ Starting timer for current class');
+      
+      if (!currentClassInfo.currentLecture || currentClassInfo.currentLecture === 'Break') {
+        Alert.alert(
+          '⚠️ No Active Lecture',
+          'Timer can only be started during an active lecture period, not during breaks.',
+          [{ text: 'OK' }]
+        );
+        return;
+      }
+      
+      // Extract current lecture info
+      const lectureInfo = {
+        subject: currentClassInfo.subject,
+        teacher: 'Current Teacher', // You may need to get this from timetable
+        room: currentClassInfo.room || 'Unknown'
+      };
+      
+      const result = await OfflineTimerService.startTimer(lectureInfo);
+      
+      if (!result.success) {
+        Alert.alert(
+          '❌ Cannot Start Timer',
+          result.error || 'Failed to start timer',
+          [{ text: 'OK' }]
+        );
+      }
+    }
+  };
 
   const setupSocket = () => {
     console.log('🔌🔌🔌 setupSocket() called - Initializing socket connection...');
@@ -4524,6 +4705,161 @@ export default function App() {
                   backgroundColor: isRunning ? '#22c55e' : theme.primary,
                 }} />
               </View>
+            </View>
+          )}
+
+          {/* Offline Timer Controls - NEW TIMER SYSTEM */}
+          {currentClassInfo && offlineTimerInitialized && (
+            <View style={{
+              width: '100%',
+              maxWidth: 400,
+              backgroundColor: theme.cardBackground,
+              borderRadius: 12,
+              padding: 20,
+              borderWidth: 2,
+              borderColor: offlineTimerState.isRunning ? '#22c55e' : theme.border,
+              marginTop: 15,
+            }}>
+              {/* Timer Header */}
+              <Text style={{
+                fontSize: 16,
+                fontWeight: 'bold',
+                color: theme.primary,
+                textAlign: 'center',
+                marginBottom: 15,
+              }}>
+                🕐 Offline Timer System
+              </Text>
+
+              {/* Timer Display */}
+              <View style={{
+                backgroundColor: theme.background,
+                borderRadius: 15,
+                padding: 20,
+                marginBottom: 15,
+                alignItems: 'center',
+                borderWidth: 2,
+                borderColor: offlineTimerState.isRunning ? '#22c55e' : theme.border,
+              }}>
+                <Text style={{
+                  fontSize: 48,
+                  fontWeight: 'bold',
+                  fontFamily: 'monospace',
+                  color: offlineTimerState.isRunning ? '#22c55e' : theme.text,
+                  textAlign: 'center',
+                }}>
+                  {Math.floor(offlineTimerState.timerSeconds / 3600).toString().padStart(2, '0')}:
+                  {Math.floor((offlineTimerState.timerSeconds % 3600) / 60).toString().padStart(2, '0')}:
+                  {(offlineTimerState.timerSeconds % 60).toString().padStart(2, '0')}
+                </Text>
+                <Text style={{
+                  fontSize: 12,
+                  color: theme.textSecondary,
+                  textAlign: 'center',
+                  marginTop: 5,
+                }}>
+                  {offlineTimerState.timerSeconds > 0 ? `${Math.floor(offlineTimerState.timerSeconds / 60)} minutes attended` : 'Ready to start'}
+                </Text>
+              </View>
+
+              {/* Timer Status */}
+              <View style={{
+                backgroundColor: theme.background,
+                borderRadius: 10,
+                padding: 12,
+                marginBottom: 15,
+              }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text style={{ fontSize: 12, color: theme.textSecondary }}>Status:</Text>
+                  <Text style={{
+                    fontSize: 12,
+                    fontWeight: 'bold',
+                    color: offlineTimerState.isRunning 
+                      ? (offlineTimerState.isPaused ? '#f59e0b' : '#22c55e')
+                      : '#ef4444'
+                  }}>
+                    {offlineTimerState.isRunning 
+                      ? (offlineTimerState.isPaused ? '⏸️ Paused' : '▶️ Running')
+                      : '⏹️ Stopped'
+                    }
+                  </Text>
+                </View>
+                
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 5 }}>
+                  <Text style={{ fontSize: 12, color: theme.textSecondary }}>Connection:</Text>
+                  <Text style={{
+                    fontSize: 12,
+                    fontWeight: 'bold',
+                    color: offlineTimerState.isOnline ? '#22c55e' : '#f59e0b'
+                  }}>
+                    {offlineTimerState.isOnline ? '🌐 Online' : '📱 Offline'}
+                  </Text>
+                </View>
+
+                {offlineTimerState.queuedSyncs > 0 && (
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 5 }}>
+                    <Text style={{ fontSize: 12, color: theme.textSecondary }}>Queued:</Text>
+                    <Text style={{ fontSize: 12, fontWeight: 'bold', color: '#f59e0b' }}>
+                      📤 {offlineTimerState.queuedSyncs} syncs pending
+                    </Text>
+                  </View>
+                )}
+
+                {offlineTimerState.currentLecture && (
+                  <View style={{ marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: theme.border }}>
+                    <Text style={{ fontSize: 11, color: theme.textSecondary, textAlign: 'center' }}>
+                      📚 {offlineTimerState.currentLecture.subject} • {offlineTimerState.currentLecture.room}
+                    </Text>
+                  </View>
+                )}
+              </View>
+
+              {/* Timer Control Button */}
+              <TouchableOpacity
+                style={{
+                  backgroundColor: offlineTimerState.isRunning ? '#ef4444' : '#22c55e',
+                  borderRadius: 12,
+                  padding: 15,
+                  alignItems: 'center',
+                  shadowColor: '#000',
+                  shadowOffset: { width: 0, height: 2 },
+                  shadowOpacity: 0.25,
+                  shadowRadius: 3.84,
+                  elevation: 5,
+                }}
+                onPress={handleTimerStartStop}
+                disabled={!currentClassInfo || currentClassInfo.currentLecture === 'Break'}
+              >
+                <Text style={{
+                  color: '#ffffff',
+                  fontSize: 16,
+                  fontWeight: 'bold',
+                }}>
+                  {offlineTimerState.isRunning ? '⏹️ STOP TIMER' : '▶️ START TIMER'}
+                </Text>
+                {(!currentClassInfo || currentClassInfo.currentLecture === 'Break') && (
+                  <Text style={{
+                    color: '#ffffff',
+                    fontSize: 12,
+                    marginTop: 5,
+                    opacity: 0.8,
+                  }}>
+                    Available during active lectures only
+                  </Text>
+                )}
+              </TouchableOpacity>
+
+              {/* Last Sync Info */}
+              {offlineTimerState.lastSyncTime && (
+                <Text style={{
+                  fontSize: 10,
+                  color: theme.textSecondary,
+                  textAlign: 'center',
+                  marginTop: 10,
+                }}>
+                  Last sync: {new Date(offlineTimerState.lastSyncTime).toLocaleTimeString()}
+                </Text>
+              )}
             </View>
           )}
 

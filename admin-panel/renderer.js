@@ -2,12 +2,15 @@
 // Configuration
 // Server URL - can be changed in Settings
 // Priority: 1. Saved in localStorage, 2. Production URL (default)
+
+// FORCE RENDER URL: Clear any existing localhost URLs
 const savedUrl = localStorage.getItem('serverUrl');
-if (savedUrl && savedUrl.includes('onrender.com')) {
-    console.log('🔄 Resetting Render URL to Localhost URL');
-    localStorage.setItem('serverUrl', 'http://localhost:3000');
+if (savedUrl && (savedUrl.includes('localhost') || savedUrl.includes('192.168'))) {
+    console.log('🔄 Clearing old localhost URL, switching to Render server');
+    localStorage.removeItem('serverUrl');
 }
-let SERVER_URL = localStorage.getItem('serverUrl') || 'http://localhost:3000';
+
+let SERVER_URL = localStorage.getItem('serverUrl') || 'https://aprilbunk.onrender.com';
 
 console.log('🌐 Admin Panel Server URL:', SERVER_URL);
 

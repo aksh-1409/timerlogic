@@ -8,10 +8,8 @@
 // ============================================
 // SERVER CONFIGURATION
 // ============================================
-// Update this URL to your backend server (using computer IP for mobile testing)
-// Production: Render.com
-// Local: http://192.168.1.8:3000 (for physical device)
-export const SERVER_BASE_URL = 'http://192.168.1.8:3000';
+// Update this URL to your backend server (using Render production server)
+export const SERVER_BASE_URL = 'https://aprilbunk.onrender.com';
 
 // Derived URLs (automatically generated from SERVER_BASE_URL)
 export const API_URL = `${SERVER_BASE_URL}/api/config`;
@@ -69,9 +67,9 @@ export const APP_NAME = 'LetsBunk';
 // 2. Rebuild the app: npm run android or BUILD_APK_PROPER_SDK.bat
 // 3. All API calls will automatically use the new URL
 //
-// Current Configuration: LOCAL (Localhost)
-// - App: http://localhost:3000
-// - Admin Panel: http://localhost:3000 (or update in Settings)
+// Current Configuration: PRODUCTION (Render)
+// - App: https://aprilbunk.onrender.com
+// - Admin Panel: https://aprilbunk.onrender.com (or update in Settings)
 //
 // To switch to local:
 // - Change SERVER_BASE_URL to: http://localhost:3000

@@ -2,5 +2,5 @@
 <resources>
     <!-- Server Configuration -->
     <!-- Local LetsBunk Server (Computer IP for Physical Device) -->
-    <string name="server_base_url">http://192.168.1.8:3000/api</string>
+    <string name="server_base_url">https://aprilbunk.onrender.com/api</string>
 </resources>

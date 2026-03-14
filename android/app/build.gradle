@@ -112,7 +112,7 @@ android {
     namespace 'com.countdowntimer.app'
     defaultConfig {
         applicationId 'com.countdowntimer.app'
-        minSdkVersion rootProject.ext.minSdkVersion
+        minSdkVersion 24
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0.0"
@@ -147,6 +147,13 @@ android {
     
     aaptOptions {
         noCompress "tflite"
+    }
+    
+    // Force all libraries to use the same minSdkVersion
+    configurations.all {
+        resolutionStrategy {
+            force 'com.facebook.react:react-android:0.74.7'
+        }
     }
 }
 
