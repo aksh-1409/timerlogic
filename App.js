@@ -40,8 +40,6 @@ import BSSIDStorage from './BSSIDStorage';
 // Face Verification Module
 import FaceVerification from './FaceVerification';
 import CircularTimer from './CircularTimer';
-// Offline Timer Service
-import OfflineTimerService from './OfflineTimerService';
 
 // Configuration - Import from centralized config
 import { SERVER_BASE_URL, API_URL as CONFIG_API_URL, SOCKET_URL as CONFIG_SOCKET_URL } from './config';
