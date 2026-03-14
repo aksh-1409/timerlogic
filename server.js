@@ -2498,6 +2498,108 @@ app.post('/api/attendance/random-ring/verify', async (req, res) => {
 // OFFLINE TIMER SYNC ENDPOINTS
 // ============================================
 
+// POST /api/attendance/record - Save daily attendance record with class duration
+app.post('/api/attendance/record', async (req, res) => {
+    const startTime = Date.now();
+    
+    try {
+        const { 
+            studentId, 
+            studentName, 
+            enrollmentNo, 
+            status, 
+            semester, 
+            branch, 
+            lectures, 
+            totalAttended, 
+            totalClassTime, 
+            dayPercentage,
+            clientDate 
+        } = req.body;
+
+        console.log(`📊 [ATTENDANCE-RECORD] Saving attendance record - Student: ${enrollmentNo} (${studentName})`);
+        console.log(`   Status: ${status}, Total Attended: ${totalAttended}min, Total Class Time: ${totalClassTime}min, Percentage: ${dayPercentage}%`);
+
+        // Validate required fields
+        if (!studentId || !enrollmentNo || !studentName) {
+            return res.status(400).json({
+                success: false,
+                error: 'Missing required fields: studentId, enrollmentNo, studentName'
+            });
+        }
+
+        // Get today's date (server time)
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        // Find or create attendance record
+        let record = await AttendanceRecord.findOne({
+            studentId,
+            date: today
+        });
+
+        if (!record) {
+            // Create new record
+            record = new AttendanceRecord({
+                studentId,
+                studentName,
+                enrollmentNo,
+                semester: semester || 'Unknown',
+                branch: branch || 'Unknown',
+                date: today,
+                status: status || 'absent',
+                lectures: lectures || [],
+                totalAttended: totalAttended || 0,
+                totalClassTime: totalClassTime || 0,
+                dayPercentage: dayPercentage || 0,
+                timerValue: 0, // Legacy field
+                createdAt: new Date(),
+                updatedAt: new Date()
+            });
+        } else {
+            // Update existing record
+            record.status = status || record.status;
+            record.lectures = lectures || record.lectures;
+            record.totalAttended = totalAttended || record.totalAttended;
+            record.totalClassTime = totalClassTime || record.totalClassTime;
+            record.dayPercentage = dayPercentage || record.dayPercentage;
+            record.updatedAt = new Date();
+        }
+
+        // Save to database
+        await record.save();
+
+        const duration = Date.now() - startTime;
+        console.log(`✅ [ATTENDANCE-RECORD] Record saved successfully - Duration: ${duration}ms`);
+
+        res.json({
+            success: true,
+            record: {
+                id: record._id,
+                studentId: record.studentId,
+                enrollmentNo: record.enrollmentNo,
+                status: record.status,
+                totalAttended: record.totalAttended,
+                totalClassTime: record.totalClassTime,
+                dayPercentage: record.dayPercentage,
+                date: record.date
+            },
+            duration: duration
+        });
+
+    } catch (error) {
+        const duration = Date.now() - startTime;
+        console.error(`❌ [ATTENDANCE-RECORD] Failed to save record - Duration: ${duration}ms, Error: ${error.message}`);
+        
+        res.status(500).json({
+            success: false,
+            error: 'Failed to save attendance record',
+            details: error.message,
+            duration: duration
+        });
+    }
+});
+
 // POST /api/attendance/offline-sync - Sync offline timer data
 app.post('/api/attendance/offline-sync', async (req, res) => {
     const startTime = Date.now();
@@ -2602,6 +2704,59 @@ app.post('/api/attendance/offline-sync', async (req, res) => {
             });
         } catch (broadcastError) {
             console.error(`❌ [OFFLINE-SYNC] Error broadcasting timer data:`, broadcastError);
+        }
+
+        // 6. Update AttendanceRecord with class duration
+        try {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+
+            // Convert timer seconds to minutes for attendance record
+            const attendedMinutes = Math.floor(timerSeconds / 60);
+            
+            // Find or create attendance record
+            let attendanceRecord = await AttendanceRecord.findOne({
+                studentId: student._id,
+                date: today
+            });
+
+            if (!attendanceRecord) {
+                // Create new attendance record
+                attendanceRecord = new AttendanceRecord({
+                    studentId: student._id,
+                    studentName: student.name,
+                    enrollmentNo: student.enrollmentNo,
+                    semester: student.semester || 'Unknown',
+                    branch: student.branch || 'Unknown',
+                    date: today,
+                    status: isRunning ? 'present' : 'absent',
+                    lectures: [],
+                    totalAttended: attendedMinutes,
+                    totalClassTime: 0, // Will be calculated based on timetable
+                    dayPercentage: 0,
+                    timerValue: Math.floor(timerSeconds),
+                    createdAt: new Date(),
+                    updatedAt: new Date()
+                });
+            } else {
+                // Update existing record with new duration
+                attendanceRecord.totalAttended = attendedMinutes;
+                attendanceRecord.timerValue = Math.floor(timerSeconds);
+                attendanceRecord.status = isRunning ? 'present' : 'absent';
+                attendanceRecord.updatedAt = new Date();
+                
+                // Update percentage if total class time is available
+                if (attendanceRecord.totalClassTime > 0) {
+                    attendanceRecord.dayPercentage = Math.round((attendedMinutes / attendanceRecord.totalClassTime) * 100);
+                }
+            }
+
+            await attendanceRecord.save();
+            console.log(`📊 [OFFLINE-SYNC] Updated AttendanceRecord - Student: ${studentId}, Attended: ${attendedMinutes}min`);
+
+        } catch (recordError) {
+            console.error(`❌ [OFFLINE-SYNC] Error updating AttendanceRecord:`, recordError);
+            // Don't fail the sync if attendance record update fails
         }
 
         const duration = Date.now() - startTime;

@@ -448,6 +448,9 @@ class OfflineTimerService {
       console.log('   Timer seconds:', this.timerSeconds);
       console.log('   Lecture:', this.currentLecture?.subject);
       
+      // Get current BSSID for validation
+      const currentBSSID = await WiFiManager.getCurrentBSSID();
+      
       const response = await fetch(`${this.serverUrl}/api/attendance/offline-sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -457,7 +460,10 @@ class OfflineTimerService {
           lecture: this.currentLecture,
           timestamp: Date.now(),
           isRunning: this.isRunning,
-          isPaused: this.isPaused
+          isPaused: this.isPaused,
+          currentBSSID: currentBSSID,
+          attendedMinutes: Math.floor(this.timerSeconds / 60),
+          sessionStartTime: this.lectureStartTime
         }),
         timeout: 5000 // 5 second timeout
       });
@@ -485,7 +491,7 @@ class OfflineTimerService {
         this.syncQueue = [];
         await this.saveSyncQueue();
         
-        console.log('✅ Sync successful');
+        console.log('✅ Sync successful - Duration updated in MongoDB');
         return { success: true };
       } else {
         throw new Error(result.error || 'Sync failed');
@@ -502,7 +508,8 @@ class OfflineTimerService {
         lecture: this.currentLecture,
         timestamp: Date.now(),
         isRunning: this.isRunning,
-        isPaused: this.isPaused
+        isPaused: this.isPaused,
+        attendedMinutes: Math.floor(this.timerSeconds / 60)
       });
       
       await this.saveSyncQueue();

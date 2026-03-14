@@ -6,6 +6,7 @@ import {
 import { StatusBar } from 'expo-status-bar';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import io from 'socket.io-client';
+import OfflineTimerService from './OfflineTimerService';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import BottomNavigation from './BottomNavigation';
 import CalendarScreen from './CalendarScreen';
@@ -1443,6 +1444,25 @@ export default function App() {
         clientDate = new Date().toISOString();
       }
 
+      // Get current timer state from OfflineTimerService if available
+      let currentTimerSeconds = 0;
+      try {
+        const timerState = OfflineTimerService.getState();
+        currentTimerSeconds = timerState.timerSeconds || 0;
+      } catch (error) {
+        console.log('Could not get timer state:', error);
+      }
+
+      // Calculate total attended time (combine period-based and timer-based)
+      const periodBasedMinutes = todayAttendance.totalAttended || 0;
+      const timerBasedMinutes = Math.floor(currentTimerSeconds / 60);
+      const totalAttendedMinutes = Math.max(periodBasedMinutes, timerBasedMinutes);
+
+      console.log('📊 Saving attendance with duration data:');
+      console.log('   Period-based minutes:', periodBasedMinutes);
+      console.log('   Timer-based minutes:', timerBasedMinutes);
+      console.log('   Total attended minutes:', totalAttendedMinutes);
+
       const response = await fetch(`${SOCKET_URL}/api/attendance/record`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1451,23 +1471,27 @@ export default function App() {
           studentName,
           enrollmentNo: userData?.enrollmentNo,
           status: todayAttendance.dayPresent ? 'present' : 'absent',
-          timerValue: 0,
+          timerValue: currentTimerSeconds,
           semester,
           branch,
           lectures: todayAttendance.lectures,
-          totalAttended: todayAttendance.totalAttended,
+          totalAttended: totalAttendedMinutes,
           totalClassTime: todayAttendance.totalClassTime,
-          dayPercentage: todayAttendance.dayPercentage,
+          dayPercentage: todayAttendance.totalClassTime > 0 
+            ? Math.round((totalAttendedMinutes / todayAttendance.totalClassTime) * 100)
+            : todayAttendance.dayPercentage,
           clientDate: clientDate // Send for server validation
         })
       });
 
       const data = await response.json();
       if (data.success) {
-        console.log('Attendance saved to server:', data.record);
+        console.log('✅ Attendance saved to server with duration:', data.record);
+      } else {
+        console.log('⚠️ Failed to save attendance:', data.error);
       }
     } catch (error) {
-      console.log('Error saving attendance to server:', error);
+      console.log('❌ Error saving attendance to server:', error);
     }
   };
 
