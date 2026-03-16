@@ -94,6 +94,9 @@ class OfflineTimerService {
       // Setup internet connectivity monitoring
       this.setupInternetMonitoring();
       
+      // Initial connectivity check and notification
+      await this.checkInternetConnectivity();
+      
       console.log('✅ Offline Timer Service initialized');
       return true;
     } catch (error) {
@@ -197,15 +200,15 @@ class OfflineTimerService {
         this.lectureStartTime = Date.now();
         this.authorizedBSSID = bssidCheck.expectedBSSID;
 
-        // Clear manual stop tracking since we're starting again
-        this.wasManuallyStoppedInSameLecture = false;
-
         // Start timer
         this.isRunning = true;
         this.isPaused = false;
 
         // Start counting
         this.startCounting();
+
+        // Clear manual stop tracking AFTER successful start
+        this.wasManuallyStoppedInSameLecture = false;
 
         // Save state
         await this.saveState();
@@ -567,6 +570,11 @@ class OfflineTimerService {
         console.log('✋ Manual stop detected - tracking for potential same-lecture restart');
         this.wasManuallyStoppedInSameLecture = true;
         
+        // DON'T clear lecture context for manual stops - preserve for same-lecture detection
+        console.log('💾 Preserving lecture context for same-lecture restart detection');
+        console.log('   Current timer seconds:', this.timerSeconds);
+        console.log('   Current lecture:', this.currentLecture?.subject);
+        
         // Clear disconnection tracking
         this.wasRunningBeforeDisconnect = false;
         this.disconnectionTime = null;
@@ -588,8 +596,9 @@ class OfflineTimerService {
       this.isRunning = false;
       this.isPaused = false;
       
-      // Only clear lecture context for manual stops
-      if (reason === 'manual') {
+      // Only clear lecture context for non-manual stops (WiFi disconnection should preserve context)
+      // For manual stops, preserve lecture context for same-lecture restart detection
+      if (reason !== 'manual' && reason !== 'wifi_disconnected' && reason !== 'bssid_changed') {
         this.currentLecture = null;
         this.lectureStartTime = null;
         this.authorizedBSSID = null;
@@ -1329,10 +1338,16 @@ class OfflineTimerService {
       
       if (savedQueue) {
         this.syncQueue = JSON.parse(savedQueue);
+        this.pendingSyncCount = this.syncQueue.length; // Update pending sync count
         console.log(`📦 Loaded ${this.syncQueue.length} queued syncs`);
+      } else {
+        this.syncQueue = [];
+        this.pendingSyncCount = 0;
       }
     } catch (error) {
       console.error('❌ Failed to load sync queue:', error);
+      this.syncQueue = [];
+      this.pendingSyncCount = 0;
     }
   }
 
