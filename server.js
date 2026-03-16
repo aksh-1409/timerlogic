@@ -2600,6 +2600,103 @@ app.post('/api/attendance/record', async (req, res) => {
     }
 });
 
+// POST /api/refresh-profile - Refresh user profile data
+app.post('/api/refresh-profile', async (req, res) => {
+    const startTime = Date.now();
+    const { id, role } = req.body;
+    
+    console.log(`🔄 [REFRESH-PROFILE] Request - ID: ${id}, Role: ${role}, IP: ${req.ip}`);
+    
+    try {
+        // Validate request body
+        if (!id || !role) {
+            console.log(`❌ [REFRESH-PROFILE] Missing required fields - ID: ${id}, Role: ${role}`);
+            return res.status(400).json({
+                success: false,
+                message: 'Missing required fields: id and role'
+            });
+        }
+
+        let user = null;
+
+        if (role === 'student') {
+            // Find student by enrollment number
+            user = await StudentManagement.findOne({ enrollmentNo: id });
+            
+            if (user) {
+                // Format student data
+                user = {
+                    id: user._id,
+                    name: user.name,
+                    enrollmentNo: user.enrollmentNo,
+                    semester: user.semester,
+                    branch: user.branch,
+                    role: 'student',
+                    profileImage: user.profileImage || null,
+                    faceEnrolled: user.faceEmbedding && user.faceEmbedding.length > 0,
+                    createdAt: user.createdAt,
+                    updatedAt: user.updatedAt
+                };
+            }
+        } else if (role === 'teacher') {
+            // Find teacher by employee ID
+            user = await Teacher.findOne({ employeeId: id });
+            
+            if (user) {
+                // Format teacher data
+                user = {
+                    id: user._id,
+                    name: user.name,
+                    employeeId: user.employeeId,
+                    department: user.department,
+                    email: user.email,
+                    phone: user.phone,
+                    role: 'teacher',
+                    canEditTimetable: user.canEditTimetable || false,
+                    profileImage: user.profileImage || null,
+                    createdAt: user.createdAt,
+                    updatedAt: user.updatedAt
+                };
+            }
+        } else {
+            console.log(`❌ [REFRESH-PROFILE] Invalid role: ${role}`);
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid role. Must be "student" or "teacher"'
+            });
+        }
+
+        if (!user) {
+            console.log(`❌ [REFRESH-PROFILE] User not found - ID: ${id}, Role: ${role}`);
+            return res.status(404).json({
+                success: false,
+                message: `${role.charAt(0).toUpperCase() + role.slice(1)} not found`
+            });
+        }
+
+        const duration = Date.now() - startTime;
+        console.log(`✅ [REFRESH-PROFILE] Profile refreshed - User: ${user.name} (${id}), Role: ${role}, Duration: ${duration}ms`);
+
+        res.json({
+            success: true,
+            user: user,
+            message: 'Profile refreshed successfully',
+            duration: duration
+        });
+
+    } catch (error) {
+        const duration = Date.now() - startTime;
+        console.error(`❌ [REFRESH-PROFILE] Error refreshing profile - ID: ${id}, Role: ${role}, Duration: ${duration}ms, Error: ${error.message}`);
+        
+        res.status(500).json({
+            success: false,
+            message: 'Failed to refresh profile',
+            error: error.message,
+            duration: duration
+        });
+    }
+});
+
 // GET /api/students/:studentId/face-data - Get student's face embedding for verification
 app.get('/api/students/:studentId/face-data', async (req, res) => {
     const startTime = Date.now();
