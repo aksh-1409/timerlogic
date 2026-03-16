@@ -35,6 +35,11 @@ class OfflineTimerService {
     this.pausedDueToWiFiLoss = false;
     this.previousLectureData = null;
     
+    // Manual stop/start tracking
+    this.wasManuallyStoppedInSameLecture = false;
+    this.lastVerifiedLecture = null;
+    this.lastFaceVerificationTime = null;
+    
     // Sync queue for offline updates
     this.syncQueue = [];
     
@@ -122,100 +127,122 @@ class OfflineTimerService {
    * Start timer with BSSID validation and face verification
    */
   async startTimer(lectureInfo) {
-    try {
-      console.log('▶️ Starting offline timer for lecture:', lectureInfo);
-      
-      // Step 1: Validate BSSID using BSSIDStorage system
-      console.log('📶 Step 1: Validating BSSID...');
-      const bssidCheck = await this.validateBSSIDWithStorage(lectureInfo.room);
-      
-      if (!bssidCheck.authorized) {
-        console.error('❌ BSSID validation failed:', bssidCheck.reason);
+      try {
+        console.log('▶️ Starting offline timer for lecture:', lectureInfo);
+
+        // Step 1: Validate BSSID using BSSIDStorage system
+        console.log('📶 Step 1: Validating BSSID...');
+        const bssidCheck = await this.validateBSSIDWithStorage(lectureInfo.room);
+
+        if (!bssidCheck.authorized) {
+          console.error('❌ BSSID validation failed:', bssidCheck.reason);
+          return {
+            success: false,
+            error: 'Not in authorized classroom',
+            reason: bssidCheck.reason,
+            details: bssidCheck,
+            step: 'bssid_validation'
+          };
+        }
+
+        console.log('✅ BSSID validation passed');
+
+        // Step 2: Check if this is a manual restart in the same lecture
+        const isSameLecture = this.isSameLecture(lectureInfo);
+        const isManualRestartInSameLecture = this.wasManuallyStoppedInSameLecture && 
+                                            isSameLecture && 
+                                            this.lastVerifiedLecture &&
+                                            this.lastVerifiedLecture.subject === lectureInfo.subject &&
+                                            this.lastVerifiedLecture.room === lectureInfo.room;
+
+        let faceVerificationResult = { success: true };
+
+        if (isManualRestartInSameLecture) {
+          // Skip face verification for manual restart in same lecture
+          console.log('🔄 Manual restart in same lecture - skipping face verification');
+          console.log('📚 Continuing from previous timer value:', this.timerSeconds);
+        } else {
+          // Perform face verification for new lecture or first start
+          console.log('👤 Step 2: Starting face verification...');
+          faceVerificationResult = await this.performFaceVerification();
+
+          if (!faceVerificationResult.success) {
+            console.error('❌ Face verification failed:', faceVerificationResult.error);
+            return {
+              success: false,
+              error: 'Face verification failed',
+              reason: faceVerificationResult.reason,
+              details: faceVerificationResult,
+              step: 'face_verification'
+            };
+          }
+
+          console.log('✅ Face verification passed');
+
+          // Update face verification tracking
+          this.lastFaceVerificationTime = Date.now();
+          this.lastVerifiedLecture = { ...lectureInfo };
+
+          // Reset timer for new lecture
+          if (!isSameLecture) {
+            console.log('📚 New lecture detected - resetting timer');
+            this.timerSeconds = 0;
+          } else {
+            console.log('📚 Same lecture with face verification - continuing from:', this.timerSeconds);
+          }
+        }
+
+        // Step 3: Set lecture context and start timer
+        this.currentLecture = lectureInfo;
+        this.lectureStartTime = Date.now();
+        this.authorizedBSSID = bssidCheck.expectedBSSID;
+
+        // Clear manual stop tracking since we're starting again
+        this.wasManuallyStoppedInSameLecture = false;
+
+        // Start timer
+        this.isRunning = true;
+        this.isPaused = false;
+
+        // Start counting
+        this.startCounting();
+
+        // Save state
+        await this.saveState();
+
+        // Notify listeners
+        this.notifyListeners({
+          type: 'timer_started',
+          timerSeconds: this.timerSeconds,
+          lecture: this.currentLecture,
+          faceVerified: faceVerificationResult.success,
+          bssidAuthorized: true,
+          skippedFaceVerification: isManualRestartInSameLecture
+        });
+
+        // Try to sync with server
+        await this.syncToServer();
+
+        console.log('✅ Offline timer started successfully', isManualRestartInSameLecture ? '(face verification skipped)' : '(with face verification)');
+        return {
+          success: true,
+          timerSeconds: this.timerSeconds,
+          isNewLecture: !isSameLecture,
+          faceVerified: faceVerificationResult.success,
+          bssidAuthorized: true,
+          skippedFaceVerification: isManualRestartInSameLecture
+        };
+
+      } catch (error) {
+        console.error('❌ Failed to start offline timer:', error);
         return {
           success: false,
-          error: 'Not in authorized classroom',
-          reason: bssidCheck.reason,
-          details: bssidCheck,
-          step: 'bssid_validation'
+          error: error.message,
+          step: 'unknown_error'
         };
       }
-      
-      console.log('✅ BSSID validation passed');
-      
-      // Step 2: Face verification
-      console.log('👤 Step 2: Starting face verification...');
-      const faceVerificationResult = await this.performFaceVerification();
-      
-      if (!faceVerificationResult.success) {
-        console.error('❌ Face verification failed:', faceVerificationResult.error);
-        return {
-          success: false,
-          error: 'Face verification failed',
-          reason: faceVerificationResult.reason,
-          details: faceVerificationResult,
-          step: 'face_verification'
-        };
-      }
-      
-      console.log('✅ Face verification passed');
-      
-      // Step 3: Check if continuing same lecture
-      const isSameLecture = this.isSameLecture(lectureInfo);
-      
-      if (!isSameLecture) {
-        // New lecture - reset timer
-        console.log('📚 New lecture detected - resetting timer');
-        this.timerSeconds = 0;
-      } else {
-        // Same lecture - continue from current value
-        console.log('📚 Continuing same lecture - timer continues from:', this.timerSeconds);
-      }
-      
-      // Step 4: Set lecture context and start timer
-      this.currentLecture = lectureInfo;
-      this.lectureStartTime = Date.now();
-      this.authorizedBSSID = bssidCheck.expectedBSSID;
-      
-      // Start timer
-      this.isRunning = true;
-      this.isPaused = false;
-      
-      // Start counting
-      this.startCounting();
-      
-      // Save state
-      await this.saveState();
-      
-      // Notify listeners
-      this.notifyListeners({
-        type: 'timer_started',
-        timerSeconds: this.timerSeconds,
-        lecture: this.currentLecture,
-        faceVerified: true,
-        bssidAuthorized: true
-      });
-      
-      // Try to sync with server
-      await this.syncToServer();
-      
-      console.log('✅ Offline timer started successfully with face verification');
-      return {
-        success: true,
-        timerSeconds: this.timerSeconds,
-        isNewLecture: !isSameLecture,
-        faceVerified: true,
-        bssidAuthorized: true
-      };
-      
-    } catch (error) {
-      console.error('❌ Failed to start offline timer:', error);
-      return {
-        success: false,
-        error: error.message,
-        step: 'unknown_error'
-      };
     }
-  }
+
 
   /**
    * Perform face verification using the FaceVerification module
@@ -535,12 +562,23 @@ class OfflineTimerService {
         console.log('💾 Preserving lecture context for potential resume');
         console.log('   Current timer seconds:', this.timerSeconds);
         console.log('   Current lecture:', this.currentLecture?.subject);
-      } else {
-        // Manual stop or other reasons - clear disconnection tracking
+      } else if (reason === 'manual') {
+        // Manual stop - track for potential same-lecture restart
+        console.log('✋ Manual stop detected - tracking for potential same-lecture restart');
+        this.wasManuallyStoppedInSameLecture = true;
+        
+        // Clear disconnection tracking
         this.wasRunningBeforeDisconnect = false;
         this.disconnectionTime = null;
         this.pausedDueToWiFiLoss = false;
         this.previousLectureData = null;
+      } else {
+        // Other reasons - clear all tracking
+        this.wasRunningBeforeDisconnect = false;
+        this.disconnectionTime = null;
+        this.pausedDueToWiFiLoss = false;
+        this.previousLectureData = null;
+        this.wasManuallyStoppedInSameLecture = false;
       }
       
       // Stop counting
@@ -1073,6 +1111,15 @@ class OfflineTimerService {
           lastSyncTime: this.lastSyncTime
         });
         
+        // Also notify connectivity change to update UI
+        this.notifyListeners({
+          type: 'connectivity_changed',
+          isOnline: this.isOnline,
+          hasInternet: this.hasInternetConnection,
+          hasAuthorizedWiFi: this.isConnectedToAuthorizedWiFi,
+          pendingSyncs: this.pendingSyncCount
+        });
+        
         return { success: true };
       } else {
         throw new Error(result.error || 'Sync failed');
@@ -1101,6 +1148,15 @@ class OfflineTimerService {
       this.notifyListeners({
         type: 'sync_failed',
         error: error.message,
+        pendingSyncs: this.pendingSyncCount
+      });
+      
+      // Also notify connectivity change to update UI
+      this.notifyListeners({
+        type: 'connectivity_changed',
+        isOnline: this.isOnline,
+        hasInternet: this.hasInternetConnection,
+        hasAuthorizedWiFi: this.isConnectedToAuthorizedWiFi,
         pendingSyncs: this.pendingSyncCount
       });
       
