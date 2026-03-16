@@ -578,6 +578,7 @@ export default function App() {
           if (currentTimeInSeconds >= startSeconds && currentTimeInSeconds <= endSeconds) {
             currentLecture = {
               subject: slot.subject,
+              teacher: slot.teacher || slot.teacherName || 'Unknown',
               room: slot.room,
               startTime: start,
               endTime: end,
@@ -602,6 +603,7 @@ export default function App() {
 
           foundClass = {
             subject: currentLecture ? currentLecture.subject : 'Break Time',
+            teacher: currentLecture ? currentLecture.teacher : '',
             room: currentLecture ? currentLecture.room : '',
             startTime: `${firstStartH.toString().padStart(2, '0')}:${firstStartM.toString().padStart(2, '0')}`,
             endTime: `${lastEndH.toString().padStart(2, '0')}:${lastEndM.toString().padStart(2, '0')}`,
@@ -790,6 +792,34 @@ export default function App() {
                     [{ text: 'OK' }]
                   );
                   break;
+                  
+                case 'wifi_reconnected':
+                  // WiFi reconnected - check if we need to handle reconnection
+                  if (event.needsReconnectionHandling) {
+                    console.log('📶 WiFi reconnected - handling reconnection logic');
+                    handleWiFiReconnectionEvent(event.currentBSSID);
+                  }
+                  break;
+                  
+                case 'timer_resumed_after_reconnection':
+                  Alert.alert(
+                    '✅ Timer Resumed',
+                    event.scenario === 'same_lecture' 
+                      ? 'WiFi reconnected to same lecture. Timer resumed from where it left off.'
+                      : 'WiFi reconnected. Timer resumed.',
+                    [{ text: 'OK' }]
+                  );
+                  break;
+                  
+                case 'timer_started_after_reconnection':
+                  Alert.alert(
+                    '🆕 New Lecture Started',
+                    event.scenario === 'different_lecture'
+                      ? 'WiFi reconnected to different lecture. Previous lecture data synced. New timer started.'
+                      : 'WiFi reconnected. Timer started.',
+                    [{ text: 'OK' }]
+                  );
+                  break;
               }
               
               // Update state with current timer state
@@ -820,6 +850,73 @@ export default function App() {
       initializeOfflineTimer();
     }
   }, [selectedRole, studentId, showLogin, userData, offlineTimerInitialized]);
+
+  // Handle WiFi reconnection events
+  const handleWiFiReconnectionEvent = async (currentBSSID) => {
+    try {
+      console.log('📶 Handling WiFi reconnection event');
+      console.log('   Current BSSID:', currentBSSID);
+      console.log('   Current class info:', currentClassInfo);
+      
+      if (!currentClassInfo) {
+        console.log('⚠️ No current class info available for reconnection');
+        return;
+      }
+      
+      // Create lecture info from current class
+      const lectureInfo = {
+        subject: currentClassInfo.subject || currentClassInfo.currentLecture,
+        teacher: currentClassInfo.teacher || 'Unknown',
+        room: currentClassInfo.room || 'Unknown',
+        startTime: currentClassInfo.startTime,
+        endTime: currentClassInfo.endTime
+      };
+      
+      console.log('📚 Attempting WiFi reconnection with lecture info:', lectureInfo);
+      
+      // Call OfflineTimerService to handle reconnection
+      const result = await OfflineTimerService.handleWiFiReconnection(lectureInfo);
+      
+      if (!result.success) {
+        console.error('❌ WiFi reconnection failed:', result.error);
+        
+        let title = '📶 WiFi Reconnection Failed';
+        let message = result.error;
+        
+        // Customize message based on failure reason
+        switch (result.step) {
+          case 'bssid_validation':
+            title = '📶 WiFi Validation Failed';
+            message = 'Unable to validate WiFi connection. Please ensure you are connected to the authorized classroom WiFi.';
+            break;
+          case 'face_verification':
+            title = '👤 Face Verification Failed';
+            message = 'Face verification failed during reconnection. Please try again.';
+            break;
+          default:
+            message = `WiFi reconnection failed: ${result.error}`;
+            break;
+        }
+        
+        Alert.alert(title, message, [{ text: 'OK' }]);
+      } else {
+        console.log('✅ WiFi reconnection handled successfully');
+        console.log('   Scenario:', result.scenario);
+        console.log('   Resumed:', result.resumed);
+        console.log('   Timer seconds:', result.timerSeconds);
+        
+        // Success message will be shown by the event listener for 
+        // 'timer_resumed_after_reconnection' or 'timer_started_after_reconnection'
+      }
+    } catch (error) {
+      console.error('❌ Error handling WiFi reconnection:', error);
+      Alert.alert(
+        '❌ Reconnection Error',
+        `An error occurred during WiFi reconnection: ${error.message}`,
+        [{ text: 'OK' }]
+      );
+    }
+  };
 
   // Handle timer start/stop based on current class
   const handleTimerStartStop = async () => {
@@ -868,7 +965,7 @@ export default function App() {
       // Extract current lecture info
       const lectureInfo = {
         subject: currentClassInfo.subject,
-        teacher: 'Current Teacher', // You may need to get this from timetable
+        teacher: currentClassInfo.teacher || 'Unknown',
         room: currentClassInfo.room || 'Unknown'
       };
       

@@ -29,6 +29,12 @@ class OfflineTimerService {
     this.lectureStartTime = null;
     this.authorizedBSSID = null;
     
+    // Disconnection state tracking
+    this.wasRunningBeforeDisconnect = false;
+    this.disconnectionTime = null;
+    this.pausedDueToWiFiLoss = false;
+    this.previousLectureData = null;
+    
     // Sync queue for offline updates
     this.syncQueue = [];
     
@@ -314,21 +320,235 @@ class OfflineTimerService {
   }
 
   /**
-   * Stop timer
+   * Handle WiFi reconnection with enhanced logic
+   */
+  async handleWiFiReconnection(newLectureInfo) {
+    try {
+      console.log('📶 WiFi reconnected - handling reconnection logic...');
+      console.log('   New lecture info:', newLectureInfo);
+      console.log('   Previous lecture:', this.currentLecture);
+      console.log('   Was running before disconnect:', this.wasRunningBeforeDisconnect);
+      console.log('   Timer seconds before disconnect:', this.timerSeconds);
+      
+      // Step 1: Validate BSSID for new connection
+      console.log('📶 Step 1: Validating BSSID for reconnection...');
+      const bssidCheck = await this.validateBSSIDWithStorage(newLectureInfo.room);
+      
+      if (!bssidCheck.authorized) {
+        console.error('❌ BSSID validation failed on reconnection:', bssidCheck.reason);
+        return {
+          success: false,
+          error: 'WiFi validation failed on reconnection',
+          reason: bssidCheck.reason,
+          step: 'bssid_validation'
+        };
+      }
+      
+      console.log('✅ BSSID validation passed on reconnection');
+      
+      // Step 2: Determine if this is the same lecture or different lecture
+      const isSameLecture = this.isSameLecture(newLectureInfo);
+      console.log('📚 Lecture comparison result:', isSameLecture ? 'SAME LECTURE' : 'DIFFERENT LECTURE');
+      
+      if (!isSameLecture && this.wasRunningBeforeDisconnect) {
+        // Scenario 2: Different lecture - sync previous lecture data first
+        console.log('📊 Different lecture detected - syncing previous lecture data...');
+        
+        // Store previous lecture data for final sync
+        this.previousLectureData = {
+          lecture: this.currentLecture,
+          timerSeconds: this.timerSeconds,
+          disconnectionTime: this.disconnectionTime
+        };
+        
+        // Perform final sync of previous lecture
+        await this.syncPreviousLectureData();
+        
+        // Reset timer for new lecture
+        console.log('🔄 Resetting timer for new lecture');
+        this.timerSeconds = 0;
+      }
+      
+      // Step 3: Face re-verification (mandatory for all reconnections)
+      console.log('👤 Step 3: Performing mandatory face re-verification...');
+      const faceVerificationResult = await this.performFaceVerification();
+      
+      if (!faceVerificationResult.success) {
+        console.error('❌ Face re-verification failed:', faceVerificationResult.error);
+        return {
+          success: false,
+          error: 'Face re-verification failed on reconnection',
+          reason: faceVerificationResult.reason,
+          step: 'face_verification'
+        };
+      }
+      
+      console.log('✅ Face re-verification passed');
+      
+      // Step 4: Handle timer resumption based on scenario
+      if (isSameLecture && this.wasRunningBeforeDisconnect) {
+        // Scenario 1: Same lecture - resume from paused state
+        console.log('▶️ Same lecture - resuming timer from paused state');
+        console.log(`   Resuming from: ${this.timerSeconds} seconds`);
+        
+        // Update lecture context
+        this.currentLecture = newLectureInfo;
+        this.authorizedBSSID = bssidCheck.expectedBSSID;
+        
+        // Resume timer
+        this.isRunning = true;
+        this.isPaused = false;
+        this.pausedDueToWiFiLoss = false;
+        this.wasRunningBeforeDisconnect = false;
+        
+        // Start counting from current value
+        this.startCounting();
+        
+        // Notify listeners
+        this.notifyListeners({
+          type: 'timer_resumed_after_reconnection',
+          timerSeconds: this.timerSeconds,
+          lecture: this.currentLecture,
+          scenario: 'same_lecture'
+        });
+        
+      } else {
+        // Scenario 2: Different lecture or wasn't running - start fresh
+        console.log('🆕 Different lecture or timer wasn\'t running - starting fresh');
+        
+        // Set new lecture context
+        this.currentLecture = newLectureInfo;
+        this.lectureStartTime = Date.now();
+        this.authorizedBSSID = bssidCheck.expectedBSSID;
+        
+        // Start fresh timer
+        this.isRunning = true;
+        this.isPaused = false;
+        this.pausedDueToWiFiLoss = false;
+        this.wasRunningBeforeDisconnect = false;
+        
+        // Start counting from 0
+        this.startCounting();
+        
+        // Notify listeners
+        this.notifyListeners({
+          type: 'timer_started_after_reconnection',
+          timerSeconds: this.timerSeconds,
+          lecture: this.currentLecture,
+          scenario: 'different_lecture'
+        });
+      }
+      
+      // Step 5: Save state and sync
+      await this.saveState();
+      await this.syncToServer();
+      
+      console.log('✅ WiFi reconnection handled successfully');
+      return {
+        success: true,
+        scenario: isSameLecture ? 'same_lecture' : 'different_lecture',
+        resumed: isSameLecture && this.wasRunningBeforeDisconnect,
+        timerSeconds: this.timerSeconds
+      };
+      
+    } catch (error) {
+      console.error('❌ Error handling WiFi reconnection:', error);
+      return {
+        success: false,
+        error: error.message,
+        step: 'reconnection_error'
+      };
+    }
+  }
+
+  /**
+   * Sync previous lecture data before starting new lecture
+   */
+  async syncPreviousLectureData() {
+    if (!this.previousLectureData) {
+      console.log('ℹ️ No previous lecture data to sync');
+      return;
+    }
+    
+    try {
+      console.log('📊 Syncing previous lecture data...');
+      console.log('   Previous lecture:', this.previousLectureData.lecture?.subject);
+      console.log('   Timer seconds:', this.previousLectureData.timerSeconds);
+      
+      // Perform final sync with previous lecture data
+      const response = await fetch(`${this.serverUrl}/api/attendance/offline-sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          studentId: this.studentId,
+          timerSeconds: this.previousLectureData.timerSeconds,
+          lecture: this.previousLectureData.lecture,
+          timestamp: this.previousLectureData.disconnectionTime || Date.now(),
+          isRunning: false, // Mark as stopped since we're switching lectures
+          isPaused: false,
+          finalSync: true, // Flag to indicate this is a final sync
+          reason: 'lecture_change'
+        }),
+        timeout: 10000
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        if (result.success) {
+          console.log('✅ Previous lecture data synced successfully');
+          this.previousLectureData = null; // Clear after successful sync
+        } else {
+          console.error('❌ Previous lecture sync failed:', result.error);
+        }
+      } else {
+        console.error('❌ Previous lecture sync request failed:', response.status);
+      }
+      
+    } catch (error) {
+      console.error('❌ Error syncing previous lecture data:', error);
+      // Don't fail the reconnection process if sync fails
+    }
+  }
+
+  /**
+   * Enhanced stop timer with disconnection tracking
    */
   async stopTimer(reason = 'manual') {
     try {
       console.log('⏹️ Stopping offline timer, reason:', reason);
       
+      // Track if this was due to WiFi disconnection
+      if (reason === 'wifi_disconnected' || reason === 'bssid_changed') {
+        console.log('📶 Timer stopped due to WiFi issue - tracking disconnection state');
+        this.wasRunningBeforeDisconnect = this.isRunning;
+        this.disconnectionTime = Date.now();
+        this.pausedDueToWiFiLoss = true;
+        
+        // Don't reset lecture context on WiFi disconnection - keep for potential resume
+        console.log('💾 Preserving lecture context for potential resume');
+        console.log('   Current timer seconds:', this.timerSeconds);
+        console.log('   Current lecture:', this.currentLecture?.subject);
+      } else {
+        // Manual stop or other reasons - clear disconnection tracking
+        this.wasRunningBeforeDisconnect = false;
+        this.disconnectionTime = null;
+        this.pausedDueToWiFiLoss = false;
+        this.previousLectureData = null;
+      }
+      
       // Stop counting
       this.stopCounting();
       
-      // Reset state BEFORE syncing
+      // Reset running state BEFORE syncing
       this.isRunning = false;
       this.isPaused = false;
-      this.currentLecture = null;
-      this.lectureStartTime = null;
-      this.authorizedBSSID = null;
+      
+      // Only clear lecture context for manual stops
+      if (reason === 'manual') {
+        this.currentLecture = null;
+        this.lectureStartTime = null;
+        this.authorizedBSSID = null;
+      }
       
       // Save state
       await this.saveState();
@@ -340,7 +560,8 @@ class OfflineTimerService {
       this.notifyListeners({
         type: 'timer_stopped',
         reason: reason,
-        finalSeconds: this.timerSeconds
+        finalSeconds: this.timerSeconds,
+        canResume: this.pausedDueToWiFiLoss
       });
       
       console.log('✅ Offline timer stopped');
@@ -526,7 +747,7 @@ class OfflineTimerService {
   }
 
   /**
-   * Setup BSSID monitoring using BSSIDStorage system
+   * Setup BSSID monitoring using BSSIDStorage system with enhanced reconnection
    */
   setupBSSIDMonitoring() {
     // Monitor BSSID every 10 seconds
@@ -555,6 +776,21 @@ class OfflineTimerService {
           this.notifyListeners({
             type: 'wifi_disconnected',
             reason: 'no_wifi'
+          });
+        }
+      } else if (this.pausedDueToWiFiLoss) {
+        // Check for WiFi reconnection when paused due to WiFi loss
+        const currentBSSID = await WiFiManager.getCurrentBSSID();
+        
+        if (currentBSSID) {
+          console.log('📶 WiFi reconnected while paused - checking for resumption...');
+          
+          // Get current lecture info from the app
+          // This should be provided by the app when WiFi reconnects
+          this.notifyListeners({
+            type: 'wifi_reconnected',
+            currentBSSID: currentBSSID,
+            needsReconnectionHandling: true
           });
         }
       }
@@ -727,7 +963,7 @@ class OfflineTimerService {
   }
 
   /**
-   * Save timer state to storage
+   * Save timer state to storage with disconnection tracking
    */
   async saveState() {
     try {
@@ -739,6 +975,11 @@ class OfflineTimerService {
         lectureStartTime: this.lectureStartTime,
         authorizedBSSID: this.authorizedBSSID,
         lastSyncTime: this.lastSyncTime,
+        // Disconnection tracking
+        wasRunningBeforeDisconnect: this.wasRunningBeforeDisconnect,
+        disconnectionTime: this.disconnectionTime,
+        pausedDueToWiFiLoss: this.pausedDueToWiFiLoss,
+        previousLectureData: this.previousLectureData,
         timestamp: Date.now()
       };
       
@@ -749,7 +990,7 @@ class OfflineTimerService {
   }
 
   /**
-   * Load timer state from storage
+   * Load timer state from storage with disconnection tracking
    */
   async loadState() {
     try {
@@ -769,14 +1010,21 @@ class OfflineTimerService {
           this.authorizedBSSID = state.authorizedBSSID;
           this.lastSyncTime = state.lastSyncTime;
           
+          // Load disconnection tracking
+          this.wasRunningBeforeDisconnect = state.wasRunningBeforeDisconnect || false;
+          this.disconnectionTime = state.disconnectionTime || null;
+          this.pausedDueToWiFiLoss = state.pausedDueToWiFiLoss || false;
+          this.previousLectureData = state.previousLectureData || null;
+          
           console.log('📦 Loaded timer state from storage:', {
             timerSeconds: this.timerSeconds,
             isRunning: this.isRunning,
+            pausedDueToWiFiLoss: this.pausedDueToWiFiLoss,
             lecture: this.currentLecture?.subject
           });
           
-          // Resume counting if was running
-          if (this.isRunning && !this.isPaused) {
+          // Resume counting if was running and not paused due to WiFi loss
+          if (this.isRunning && !this.isPaused && !this.pausedDueToWiFiLoss) {
             this.startCounting();
           }
         } else {
@@ -816,7 +1064,7 @@ class OfflineTimerService {
   }
 
   /**
-   * Get current timer state
+   * Get current timer state with disconnection info
    */
   getState() {
     return {
@@ -826,7 +1074,11 @@ class OfflineTimerService {
       currentLecture: this.currentLecture,
       isOnline: this.isOnline,
       lastSyncTime: this.lastSyncTime,
-      queuedSyncs: this.syncQueue.length
+      queuedSyncs: this.syncQueue.length,
+      // Disconnection state
+      pausedDueToWiFiLoss: this.pausedDueToWiFiLoss,
+      wasRunningBeforeDisconnect: this.wasRunningBeforeDisconnect,
+      canResumeAfterReconnection: this.pausedDueToWiFiLoss && this.wasRunningBeforeDisconnect
     };
   }
 
