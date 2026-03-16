@@ -862,6 +862,15 @@ export default function App() {
                     );
                   }
                   break;
+                  
+                case 'lecture_ended':
+                  // Lecture period has ended - timer automatically stopped
+                  Alert.alert(
+                    '⏰ Lecture Period Ended',
+                    `The lecture period for ${event.lecture.subject} has ended.\n\nTimer automatically stopped and attendance synced.\n\nAttended: ${event.attendedMinutes} minutes`,
+                    [{ text: 'OK' }]
+                  );
+                  break;
               }
               
               // Update state with current timer state
@@ -1008,7 +1017,9 @@ export default function App() {
       const lectureInfo = {
         subject: currentClassInfo.subject,
         teacher: currentClassInfo.teacher || 'Unknown',
-        room: currentClassInfo.room || 'Unknown'
+        room: currentClassInfo.room || 'Unknown',
+        startTime: currentClassInfo.startTime,
+        endTime: currentClassInfo.endTime
       };
       
       const result = await OfflineTimerService.startTimer(lectureInfo);

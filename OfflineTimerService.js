@@ -23,6 +23,7 @@ class OfflineTimerService {
     this.timerInterval = null;
     this.syncInterval = null;
     this.bssidMonitorInterval = null;
+    this.lectureEndCheckInterval = null;
     
     // Lecture context
     this.currentLecture = null;
@@ -93,6 +94,9 @@ class OfflineTimerService {
       
       // Setup internet connectivity monitoring
       this.setupInternetMonitoring();
+      
+      // Setup lecture end time monitoring
+      this.setupLectureEndMonitoring();
       
       // Initial connectivity check and notification
       await this.checkInternetConnectivity();
@@ -580,6 +584,14 @@ class OfflineTimerService {
         this.disconnectionTime = null;
         this.pausedDueToWiFiLoss = false;
         this.previousLectureData = null;
+      } else if (reason === 'lecture_ended') {
+        // Lecture ended - clear all tracking and context
+        console.log('⏰ Lecture period ended - clearing all tracking');
+        this.wasManuallyStoppedInSameLecture = false;
+        this.wasRunningBeforeDisconnect = false;
+        this.disconnectionTime = null;
+        this.pausedDueToWiFiLoss = false;
+        this.previousLectureData = null;
       } else {
         // Other reasons - clear all tracking
         this.wasRunningBeforeDisconnect = false;
@@ -596,9 +608,12 @@ class OfflineTimerService {
       this.isRunning = false;
       this.isPaused = false;
       
-      // Only clear lecture context for non-manual stops (WiFi disconnection should preserve context)
-      // For manual stops, preserve lecture context for same-lecture restart detection
-      if (reason !== 'manual' && reason !== 'wifi_disconnected' && reason !== 'bssid_changed') {
+      // Clear lecture context for lecture_ended, preserve for manual/WiFi stops
+      if (reason === 'lecture_ended') {
+        this.currentLecture = null;
+        this.lectureStartTime = null;
+        this.authorizedBSSID = null;
+      } else if (reason !== 'manual' && reason !== 'wifi_disconnected' && reason !== 'bssid_changed') {
         this.currentLecture = null;
         this.lectureStartTime = null;
         this.authorizedBSSID = null;
@@ -785,6 +800,49 @@ class OfflineTimerService {
         expectedBSSID: 'Unknown'
       };
     }
+  }
+
+  /**
+   * Check if current lecture has ended based on end time
+   */
+  isLectureEnded() {
+    if (!this.currentLecture || !this.currentLecture.endTime) {
+      return false;
+    }
+    
+    const now = new Date();
+    const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+    
+    // Compare current time with lecture end time
+    return currentTime > this.currentLecture.endTime;
+  }
+
+  /**
+   * Setup lecture end time monitoring
+   */
+  setupLectureEndMonitoring() {
+    // Check every 30 seconds if lecture has ended
+    this.lectureEndCheckInterval = setInterval(async () => {
+      if (this.isRunning && !this.isPaused && this.currentLecture) {
+        if (this.isLectureEnded()) {
+          console.log('⏰ Lecture period has ended - automatically stopping timer');
+          console.log(`   Lecture: ${this.currentLecture.subject}`);
+          console.log(`   End time: ${this.currentLecture.endTime}`);
+          console.log(`   Final timer seconds: ${this.timerSeconds}`);
+          
+          // Stop timer with 'lecture_ended' reason
+          await this.stopTimer('lecture_ended');
+          
+          // Notify listeners
+          this.notifyListeners({
+            type: 'lecture_ended',
+            lecture: this.currentLecture,
+            finalSeconds: this.timerSeconds,
+            attendedMinutes: Math.floor(this.timerSeconds / 60)
+          });
+        }
+      }
+    }, 30000); // Check every 30 seconds
   }
 
   /**
@@ -1415,6 +1473,11 @@ class OfflineTimerService {
     if (this.internetCheckInterval) {
       clearInterval(this.internetCheckInterval);
       this.internetCheckInterval = null;
+    }
+    
+    if (this.lectureEndCheckInterval) {
+      clearInterval(this.lectureEndCheckInterval);
+      this.lectureEndCheckInterval = null;
     }
     
     if (this.appStateSubscription) {
