@@ -47,8 +47,12 @@ class OfflineTimerService {
     
     // Connection status
     this.isOnline = true;
+    this.hasInternetConnection = true;
+    this.isConnectedToAuthorizedWiFi = false;
     this.lastSyncTime = null;
     this.lastSyncAttempt = null;
+    this.internetCheckInterval = null;
+    this.pendingSyncCount = 0;
     
     // Background timer tracking
     this.backgroundStartTime = null;
@@ -81,6 +85,9 @@ class OfflineTimerService {
       
       // Setup sync interval (every 2 minutes)
       this.setupSyncInterval();
+      
+      // Setup internet connectivity monitoring
+      this.setupInternetMonitoring();
       
       console.log('✅ Offline Timer Service initialized');
       return true;
@@ -809,6 +816,197 @@ class OfflineTimerService {
   }
 
   /**
+   * Setup internet connectivity monitoring
+   */
+  setupInternetMonitoring() {
+    // Check internet connectivity every 30 seconds
+    this.internetCheckInterval = setInterval(async () => {
+      await this.checkInternetConnectivity();
+    }, 30000); // 30 seconds
+    
+    // Initial check
+    this.checkInternetConnectivity();
+  }
+
+  /**
+   * Check internet connectivity and WiFi authorization status
+   */
+  async checkInternetConnectivity() {
+    try {
+      // Check WiFi authorization first
+      const currentBSSID = await WiFiManager.getCurrentBSSID();
+      const wasConnectedToAuthorizedWiFi = this.isConnectedToAuthorizedWiFi;
+      
+      if (currentBSSID) {
+        const validation = await BSSIDStorage.validateCurrentBSSID(currentBSSID);
+        this.isConnectedToAuthorizedWiFi = validation.valid;
+      } else {
+        this.isConnectedToAuthorizedWiFi = false;
+      }
+      
+      // Check internet connectivity
+      const wasOnline = this.hasInternetConnection;
+      
+      try {
+        // Try to reach the server with a quick ping
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+        
+        const response = await fetch(`${this.serverUrl}/api/health`, {
+          method: 'GET',
+          signal: controller.signal,
+          headers: { 'Cache-Control': 'no-cache' }
+        });
+        
+        clearTimeout(timeoutId);
+        this.hasInternetConnection = response.ok;
+      } catch (error) {
+        this.hasInternetConnection = false;
+      }
+      
+      // Update overall online status (WiFi + Internet)
+      const wasOverallOnline = this.isOnline;
+      this.isOnline = this.isConnectedToAuthorizedWiFi && this.hasInternetConnection;
+      
+      // Update pending sync count
+      this.pendingSyncCount = this.syncQueue.length;
+      
+      // Notify listeners of connectivity changes
+      if (wasOverallOnline !== this.isOnline || wasOnline !== this.hasInternetConnection || wasConnectedToAuthorizedWiFi !== this.isConnectedToAuthorizedWiFi) {
+        console.log('📶 Connectivity status changed:');
+        console.log('   WiFi Authorized:', this.isConnectedToAuthorizedWiFi);
+        console.log('   Internet:', this.hasInternetConnection);
+        console.log('   Overall Online:', this.isOnline);
+        console.log('   Pending Syncs:', this.pendingSyncCount);
+        
+        this.notifyListeners({
+          type: 'connectivity_changed',
+          isOnline: this.isOnline,
+          hasInternet: this.hasInternetConnection,
+          hasAuthorizedWiFi: this.isConnectedToAuthorizedWiFi,
+          pendingSyncs: this.pendingSyncCount
+        });
+      }
+      
+      // Auto-sync when internet comes back online
+      if (!wasOnline && this.hasInternetConnection && this.syncQueue.length > 0) {
+        console.log('🔄 Internet restored - auto-syncing pending data');
+        await this.syncPendingData();
+      }
+      
+    } catch (error) {
+      console.error('❌ Error checking connectivity:', error);
+      this.hasInternetConnection = false;
+      this.isOnline = false;
+    }
+  }
+
+  /**
+   * Sync all pending data when internet is restored
+   */
+  async syncPendingData() {
+    if (!this.hasInternetConnection || this.syncQueue.length === 0) {
+      return;
+    }
+    
+    console.log(`🔄 Syncing ${this.syncQueue.length} pending items...`);
+    
+    // Try to sync current timer state first
+    if (this.isRunning) {
+      await this.syncToServer();
+    }
+    
+    // Process sync queue
+    const queueCopy = [...this.syncQueue];
+    let successCount = 0;
+    
+    for (const queueItem of queueCopy) {
+      try {
+        const response = await fetch(`${this.serverUrl}/api/attendance/offline-sync`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...queueItem,
+            studentId: this.studentId,
+            isQueuedSync: true
+          }),
+          timeout: 10000
+        });
+
+        if (response.ok) {
+          const result = await response.json();
+          if (result.success) {
+            successCount++;
+            // Remove from queue
+            this.syncQueue = this.syncQueue.filter(item => item.timestamp !== queueItem.timestamp);
+          }
+        }
+      } catch (error) {
+        console.warn('⚠️ Failed to sync queued item:', error);
+        break; // Stop processing if sync fails
+      }
+    }
+    
+    if (successCount > 0) {
+      console.log(`✅ Successfully synced ${successCount} pending items`);
+      await this.saveSyncQueue();
+      this.pendingSyncCount = this.syncQueue.length;
+      
+      this.notifyListeners({
+        type: 'pending_syncs_completed',
+        syncedCount: successCount,
+        remainingCount: this.pendingSyncCount
+      });
+    }
+  }
+
+  /**
+   * Force sync timer data (called by refresh button)
+   */
+  async forceSyncTimerData() {
+    console.log('🔄 Force syncing timer data...');
+    
+    // Check connectivity first
+    await this.checkInternetConnectivity();
+    
+    if (!this.hasInternetConnection) {
+      console.log('⚠️ No internet connection - cannot sync');
+      return {
+        success: false,
+        error: 'No internet connection',
+        isOffline: true,
+        pendingSyncs: this.pendingSyncCount
+      };
+    }
+    
+    if (!this.isConnectedToAuthorizedWiFi) {
+      console.log('⚠️ Not connected to authorized WiFi');
+      return {
+        success: false,
+        error: 'Not connected to authorized WiFi',
+        isOffline: false,
+        pendingSyncs: this.pendingSyncCount
+      };
+    }
+    
+    // Sync current timer state
+    const syncResult = await this.syncToServer();
+    
+    // Also sync any pending data
+    if (this.syncQueue.length > 0) {
+      await this.syncPendingData();
+    }
+    
+    return {
+      success: syncResult.success,
+      error: syncResult.error,
+      isOffline: false,
+      pendingSyncs: this.pendingSyncCount,
+      lastSyncTime: this.lastSyncTime
+    };
+  }
+
+  /**
    * Sync timer data to server
    */
   async syncToServer() {
@@ -849,6 +1047,7 @@ class OfflineTimerService {
       
       if (result.success) {
         this.isOnline = true;
+        this.hasInternetConnection = true;
         this.lastSyncTime = Date.now();
         
         // Check for missed random rings
@@ -863,8 +1062,17 @@ class OfflineTimerService {
         // Clear sync queue on successful sync
         this.syncQueue = [];
         await this.saveSyncQueue();
+        this.pendingSyncCount = 0;
         
         console.log('✅ Sync successful - Duration updated in MongoDB');
+        
+        // Notify listeners of successful sync
+        this.notifyListeners({
+          type: 'sync_successful',
+          timerSeconds: this.timerSeconds,
+          lastSyncTime: this.lastSyncTime
+        });
+        
         return { success: true };
       } else {
         throw new Error(result.error || 'Sync failed');
@@ -873,6 +1081,7 @@ class OfflineTimerService {
     } catch (error) {
       console.warn('⚠️ Sync failed, queuing for later:', error.message);
       
+      this.hasInternetConnection = false;
       this.isOnline = false;
       
       // Add to sync queue
@@ -886,6 +1095,14 @@ class OfflineTimerService {
       });
       
       await this.saveSyncQueue();
+      this.pendingSyncCount = this.syncQueue.length;
+      
+      // Notify listeners of sync failure
+      this.notifyListeners({
+        type: 'sync_failed',
+        error: error.message,
+        pendingSyncs: this.pendingSyncCount
+      });
       
       return { success: false, error: error.message };
     }
@@ -1073,8 +1290,11 @@ class OfflineTimerService {
       timerSeconds: this.timerSeconds,
       currentLecture: this.currentLecture,
       isOnline: this.isOnline,
+      hasInternetConnection: this.hasInternetConnection,
+      isConnectedToAuthorizedWiFi: this.isConnectedToAuthorizedWiFi,
       lastSyncTime: this.lastSyncTime,
       queuedSyncs: this.syncQueue.length,
+      pendingSyncCount: this.pendingSyncCount,
       // Disconnection state
       pausedDueToWiFiLoss: this.pausedDueToWiFiLoss,
       wasRunningBeforeDisconnect: this.wasRunningBeforeDisconnect,
@@ -1119,6 +1339,11 @@ class OfflineTimerService {
     if (this.bssidMonitorInterval) {
       clearInterval(this.bssidMonitorInterval);
       this.bssidMonitorInterval = null;
+    }
+    
+    if (this.internetCheckInterval) {
+      clearInterval(this.internetCheckInterval);
+      this.internetCheckInterval = null;
     }
     
     if (this.appStateSubscription) {

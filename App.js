@@ -163,8 +163,11 @@ export default function App() {
     timerSeconds: 0,
     currentLecture: null,
     isOnline: true,
+    hasInternetConnection: true,
+    isConnectedToAuthorizedWiFi: false,
     lastSyncTime: null,
-    queuedSyncs: 0
+    queuedSyncs: 0,
+    pendingSyncCount: 0
   });
   const [offlineTimerInitialized, setOfflineTimerInitialized] = useState(false);
 
@@ -819,6 +822,45 @@ export default function App() {
                       : 'WiFi reconnected. Timer started.',
                     [{ text: 'OK' }]
                   );
+                  break;
+                  
+                case 'connectivity_changed':
+                  // Update offline timer state with connectivity info
+                  setOfflineTimerState(prev => ({
+                    ...prev,
+                    isOnline: event.isOnline,
+                    hasInternetConnection: event.hasInternet,
+                    isConnectedToAuthorizedWiFi: event.hasAuthorizedWiFi,
+                    pendingSyncCount: event.pendingSyncs
+                  }));
+                  
+                  // Show connectivity status changes to user
+                  if (!event.hasInternet && event.hasAuthorizedWiFi) {
+                    console.log('📶 App went offline - timer running locally');
+                  } else if (event.hasInternet && event.hasAuthorizedWiFi) {
+                    console.log('📶 App back online - syncing data');
+                  }
+                  break;
+                  
+                case 'sync_successful':
+                  console.log('✅ Timer sync successful');
+                  break;
+                  
+                case 'sync_failed':
+                  console.log('⚠️ Timer sync failed:', event.error);
+                  break;
+                  
+                case 'pending_syncs_completed':
+                  console.log(`✅ Completed ${event.syncedCount} pending syncs, ${event.remainingCount} remaining`);
+                  if (event.syncedCount > 0) {
+                    // Show brief success message for auto-sync
+                    Alert.alert(
+                      '✅ Data Synced',
+                      `${event.syncedCount} pending sync${event.syncedCount > 1 ? 's' : ''} completed successfully.`,
+                      [{ text: 'OK' }],
+                      { cancelable: true }
+                    );
+                  }
                   break;
               }
               
@@ -2848,25 +2890,68 @@ export default function App() {
   const onRefreshStudent = async () => {
     setRefreshingStudent(true);
     setIsOffline(false);
+    
     try {
-      // Test server connection first
+      console.log('🔄 Student refresh started - checking connectivity and syncing timer...');
+      
+      // Force sync timer data if OfflineTimerService is available
+      let syncResult = null;
+      if (offlineTimerInitialized) {
+        console.log('⏱️ Force syncing timer data...');
+        syncResult = await OfflineTimerService.forceSyncTimerData();
+        
+        if (syncResult.success) {
+          console.log('✅ Timer sync successful');
+        } else {
+          console.log('⚠️ Timer sync failed:', syncResult.error);
+          if (syncResult.isOffline) {
+            setIsOffline(true);
+          }
+        }
+      }
+      
+      // Test server connection
       const healthCheck = await fetch(`${SOCKET_URL}/api/health`, { timeout: 5000 });
       if (!healthCheck.ok) {
         throw new Error('Server not responding');
       }
 
+      // Refresh timetable and profile data
       if (semester && branch) {
         await fetchTimetable(semester, branch);
       }
       await refreshUserProfile();
-      // Reset timer state
-      // Timer removed - period-based attendance
+      
+      // Show success message with sync info
+      if (syncResult && syncResult.success) {
+        const lastSyncTime = syncResult.lastSyncTime ? new Date(syncResult.lastSyncTime).toLocaleTimeString() : 'Never';
+        Alert.alert(
+          '✅ Refresh Complete',
+          `Profile and timer data refreshed successfully.\n\nLast sync: ${lastSyncTime}${syncResult.pendingSyncs > 0 ? `\nPending syncs: ${syncResult.pendingSyncs}` : ''}`,
+          [{ text: 'OK' }]
+        );
+      } else if (syncResult && !syncResult.success && !syncResult.isOffline) {
+        Alert.alert(
+          '⚠️ Partial Refresh',
+          `Profile refreshed but timer sync failed: ${syncResult.error}${syncResult.pendingSyncs > 0 ? `\n\nPending syncs: ${syncResult.pendingSyncs}` : ''}`,
+          [{ text: 'OK' }]
+        );
+      }
+      
       setIsOffline(false);
     } catch (error) {
-      console.log('Error refreshing student dashboard:', error);
+      console.log('❌ Error refreshing student dashboard:', error);
       setIsOffline(true);
-      // Show offline message for 3 seconds
-      setTimeout(() => setIsOffline(false), 3000);
+      
+      // Show offline message
+      Alert.alert(
+        '📶 App Offline',
+        'Unable to connect to server. The app is running in offline mode. Timer will continue locally and sync when connection is restored.',
+        [{ text: 'OK' }]
+      );
+      
+      // Auto-hide offline indicator after 5 seconds
+      setTimeout(() => setIsOffline(false), 5000);
     } finally {
       setRefreshingStudent(false);
     }
@@ -4953,13 +5038,33 @@ export default function App() {
                 
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 5 }}>
                   <Text style={{ fontSize: 12, color: theme.textSecondary }}>Connection:</Text>
-                  <Text style={{
-                    fontSize: 12,
-                    fontWeight: 'bold',
-                    color: offlineTimerState.isOnline ? '#22c55e' : '#f59e0b'
-                  }}>
-                    {offlineTimerState.isOnline ? '🌐 Online' : '📱 Offline'}
-                  </Text>
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <Text style={{
+                      fontSize: 12,
+                      fontWeight: 'bold',
+                      color: offlineTimerState.hasInternetConnection && offlineTimerState.isConnectedToAuthorizedWiFi 
+                        ? '#22c55e' 
+                        : offlineTimerState.isConnectedToAuthorizedWiFi 
+                          ? '#f59e0b' 
+                          : '#ef4444'
+                    }}>
+                      {offlineTimerState.hasInternetConnection && offlineTimerState.isConnectedToAuthorizedWiFi 
+                        ? '🌐 Online' 
+                        : offlineTimerState.isConnectedToAuthorizedWiFi 
+                          ? '📱 Offline' 
+                          : '❌ No WiFi'
+                      }
+                    </Text>
+                    {offlineTimerState.pendingSyncCount > 0 && (
+                      <Text style={{
+                        fontSize: 10,
+                        color: '#f59e0b',
+                        marginTop: 2
+                      }}>
+                        {offlineTimerState.pendingSyncCount} pending sync{offlineTimerState.pendingSyncCount > 1 ? 's' : ''}
+                      </Text>
+                    )}
+                  </View>
                 </View>
 
                 {/* Verification Status */}
