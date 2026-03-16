@@ -2600,6 +2600,59 @@ app.post('/api/attendance/record', async (req, res) => {
     }
 });
 
+// GET /api/students/:studentId/face-data - Get student's face embedding for verification
+app.get('/api/students/:studentId/face-data', async (req, res) => {
+    const startTime = Date.now();
+    const { studentId } = req.params;
+    
+    console.log(`👤 [FACE-DATA] Request for student: ${studentId}, IP: ${req.ip}`);
+    
+    try {
+        // Find student by enrollment number
+        const student = await StudentManagement.findOne({ enrollmentNo: studentId });
+        
+        if (!student) {
+            console.log(`❌ [FACE-DATA] Student not found: ${studentId}`);
+            return res.status(404).json({
+                success: false,
+                error: 'Student not found'
+            });
+        }
+        
+        // Check if face is enrolled
+        if (!student.faceEmbedding || student.faceEmbedding.length === 0) {
+            console.log(`❌ [FACE-DATA] No face enrolled for student: ${studentId}`);
+            return res.status(404).json({
+                success: false,
+                error: 'Face not enrolled. Please enroll your face first using the enrollment app.'
+            });
+        }
+        
+        const duration = Date.now() - startTime;
+        console.log(`✅ [FACE-DATA] Face data found for student: ${studentId}, Embedding size: ${student.faceEmbedding.length}, Duration: ${duration}ms`);
+        
+        res.json({
+            success: true,
+            faceEmbedding: student.faceEmbedding,
+            enrolledAt: student.faceEnrolledAt || student.createdAt,
+            studentName: student.name,
+            enrollmentNo: student.enrollmentNo,
+            duration: duration
+        });
+        
+    } catch (error) {
+        const duration = Date.now() - startTime;
+        console.error(`❌ [FACE-DATA] Error fetching face data for student: ${studentId}, Duration: ${duration}ms, Error: ${error.message}`);
+        
+        res.status(500).json({
+            success: false,
+            error: 'Failed to fetch face data',
+            details: error.message,
+            duration: duration
+        });
+    }
+});
+
 // POST /api/attendance/offline-sync - Sync offline timer data
 app.post('/api/attendance/offline-sync', async (req, res) => {
     const startTime = Date.now();

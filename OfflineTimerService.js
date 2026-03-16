@@ -106,13 +106,14 @@ class OfflineTimerService {
   }
 
   /**
-   * Start timer with BSSID validation using offline-bssid system
+   * Start timer with BSSID validation and face verification
    */
   async startTimer(lectureInfo) {
     try {
       console.log('▶️ Starting offline timer for lecture:', lectureInfo);
       
-      // Validate BSSID using BSSIDStorage system
+      // Step 1: Validate BSSID using BSSIDStorage system
+      console.log('📶 Step 1: Validating BSSID...');
       const bssidCheck = await this.validateBSSIDWithStorage(lectureInfo.room);
       
       if (!bssidCheck.authorized) {
@@ -121,11 +122,31 @@ class OfflineTimerService {
           success: false,
           error: 'Not in authorized classroom',
           reason: bssidCheck.reason,
-          details: bssidCheck
+          details: bssidCheck,
+          step: 'bssid_validation'
         };
       }
       
-      // Check if continuing same lecture
+      console.log('✅ BSSID validation passed');
+      
+      // Step 2: Face verification
+      console.log('👤 Step 2: Starting face verification...');
+      const faceVerificationResult = await this.performFaceVerification();
+      
+      if (!faceVerificationResult.success) {
+        console.error('❌ Face verification failed:', faceVerificationResult.error);
+        return {
+          success: false,
+          error: 'Face verification failed',
+          reason: faceVerificationResult.reason,
+          details: faceVerificationResult,
+          step: 'face_verification'
+        };
+      }
+      
+      console.log('✅ Face verification passed');
+      
+      // Step 3: Check if continuing same lecture
       const isSameLecture = this.isSameLecture(lectureInfo);
       
       if (!isSameLecture) {
@@ -137,7 +158,7 @@ class OfflineTimerService {
         console.log('📚 Continuing same lecture - timer continues from:', this.timerSeconds);
       }
       
-      // Set lecture context
+      // Step 4: Set lecture context and start timer
       this.currentLecture = lectureInfo;
       this.lectureStartTime = Date.now();
       this.authorizedBSSID = bssidCheck.expectedBSSID;
@@ -156,24 +177,138 @@ class OfflineTimerService {
       this.notifyListeners({
         type: 'timer_started',
         timerSeconds: this.timerSeconds,
-        lecture: this.currentLecture
+        lecture: this.currentLecture,
+        faceVerified: true,
+        bssidAuthorized: true
       });
       
       // Try to sync with server
       await this.syncToServer();
       
-      console.log('✅ Offline timer started successfully');
+      console.log('✅ Offline timer started successfully with face verification');
       return {
         success: true,
         timerSeconds: this.timerSeconds,
-        isNewLecture: !isSameLecture
+        isNewLecture: !isSameLecture,
+        faceVerified: true,
+        bssidAuthorized: true
       };
       
     } catch (error) {
       console.error('❌ Failed to start offline timer:', error);
       return {
         success: false,
-        error: error.message
+        error: error.message,
+        step: 'unknown_error'
+      };
+    }
+  }
+
+  /**
+   * Perform face verification using the FaceVerification module
+   */
+  async performFaceVerification() {
+    try {
+      // Import FaceVerification dynamically to avoid circular imports
+      const FaceVerification = require('./FaceVerification').default;
+      
+      // Get student's stored face embedding from server
+      console.log('📡 Fetching student face data from server...');
+      const faceData = await this.getStudentFaceData();
+      
+      if (!faceData.success) {
+        return {
+          success: false,
+          reason: 'no_face_enrolled',
+          error: 'No face data enrolled. Please enroll your face first using the enrollment app.',
+          details: faceData
+        };
+      }
+      
+      // Perform face verification
+      console.log('🔐 Performing face verification...');
+      const verificationResult = await FaceVerification.verifyFace(faceData.embedding);
+      
+      if (!verificationResult.success) {
+        return {
+          success: false,
+          reason: 'verification_failed',
+          error: 'Face verification failed. Please try again.',
+          details: verificationResult
+        };
+      }
+      
+      if (!verificationResult.isMatch) {
+        return {
+          success: false,
+          reason: 'face_not_matched',
+          error: `Face verification failed. Similarity: ${verificationResult.similarityPercentage}%`,
+          details: verificationResult
+        };
+      }
+      
+      console.log(`✅ Face verification successful! Similarity: ${verificationResult.similarityPercentage}%`);
+      
+      return {
+        success: true,
+        similarity: verificationResult.similarity,
+        similarityPercentage: verificationResult.similarityPercentage,
+        details: verificationResult
+      };
+      
+    } catch (error) {
+      console.error('❌ Face verification error:', error);
+      return {
+        success: false,
+        reason: 'verification_error',
+        error: `Face verification error: ${error.message}`,
+        details: { error: error.message }
+      };
+    }
+  }
+
+  /**
+   * Get student's face embedding from server
+   */
+  async getStudentFaceData() {
+    try {
+      const response = await fetch(`${this.serverUrl}/api/students/${this.studentId}/face-data`, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+        timeout: 10000 // 10 second timeout
+      });
+
+      if (!response.ok) {
+        throw new Error(`Server error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      
+      if (!data.success) {
+        return {
+          success: false,
+          error: data.error || 'Failed to get face data'
+        };
+      }
+      
+      if (!data.faceEmbedding || !Array.isArray(data.faceEmbedding)) {
+        return {
+          success: false,
+          error: 'No face embedding found. Please enroll your face first.'
+        };
+      }
+      
+      return {
+        success: true,
+        embedding: data.faceEmbedding,
+        enrolledAt: data.enrolledAt
+      };
+      
+    } catch (error) {
+      console.error('❌ Error fetching face data:', error);
+      return {
+        success: false,
+        error: `Failed to fetch face data: ${error.message}`
       };
     }
   }

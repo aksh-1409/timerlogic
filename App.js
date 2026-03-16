@@ -845,7 +845,7 @@ export default function App() {
         );
       }
     } else {
-      // Start timer
+      // Start timer with BSSID and face verification
       console.log('▶️ Starting timer for current class');
       
       if (!currentClassInfo.currentLecture || currentClassInfo.currentLecture === 'Break') {
@@ -857,6 +857,14 @@ export default function App() {
         return;
       }
       
+      // Show loading indicator for verification process
+      Alert.alert(
+        '🔐 Starting Verification',
+        'Please wait while we verify your location and identity...',
+        [],
+        { cancelable: false }
+      );
+      
       // Extract current lecture info
       const lectureInfo = {
         subject: currentClassInfo.subject,
@@ -866,10 +874,49 @@ export default function App() {
       
       const result = await OfflineTimerService.startTimer(lectureInfo);
       
+      // Dismiss loading alert
+      Alert.alert('', '', [], { cancelable: true });
+      
       if (!result.success) {
+        let title = '❌ Cannot Start Timer';
+        let message = result.error || 'Failed to start timer';
+        
+        // Provide specific error messages based on the step that failed
+        switch (result.step) {
+          case 'bssid_validation':
+            title = '📶 WiFi Validation Failed';
+            message = result.error + '\n\nPlease ensure you are connected to the correct classroom WiFi network.';
+            break;
+          case 'face_verification':
+            title = '👤 Face Verification Failed';
+            if (result.reason === 'no_face_enrolled') {
+              message = 'Face not enrolled. Please use the Face Enrollment app to enroll your face first.';
+            } else if (result.reason === 'face_not_matched') {
+              message = result.error + '\n\nPlease ensure good lighting and look directly at the camera.';
+            } else {
+              message = result.error + '\n\nPlease try again or contact support if the issue persists.';
+            }
+            break;
+          default:
+            // Keep default message
+            break;
+        }
+        
+        Alert.alert(title, message, [
+          { text: 'OK' },
+          ...(result.step === 'face_verification' && result.reason === 'no_face_enrolled' 
+            ? [{ text: 'Open Enrollment App', onPress: () => {
+                // You could add logic here to open the enrollment app
+                console.log('User wants to open enrollment app');
+              }}]
+            : []
+          )
+        ]);
+      } else {
+        // Success - timer started
         Alert.alert(
-          '❌ Cannot Start Timer',
-          result.error || 'Failed to start timer',
+          '✅ Timer Started',
+          `Timer started successfully!\n\n✅ WiFi: Authorized\n✅ Face: Verified (${result.faceVerified ? 'Match' : 'Unknown'})\n\nAttendance tracking is now active.`,
           [{ text: 'OK' }]
         );
       }
@@ -4818,6 +4865,20 @@ export default function App() {
                   </Text>
                 </View>
 
+                {/* Verification Status */}
+                {offlineTimerState.isRunning && (
+                  <View style={{ marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: theme.border }}>
+                    <Text style={{ fontSize: 11, color: theme.textSecondary, textAlign: 'center', marginBottom: 4 }}>
+                      Security Status
+                    </Text>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-around' }}>
+                      <Text style={{ fontSize: 10, color: '#22c55e' }}>📶 WiFi ✓</Text>
+                      <Text style={{ fontSize: 10, color: '#22c55e' }}>👤 Face ✓</Text>
+                      <Text style={{ fontSize: 10, color: '#22c55e' }}>📍 Location ✓</Text>
+                    </View>
+                  </View>
+                )}
+
                 {offlineTimerState.queuedSyncs > 0 && (
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 5 }}>
                     <Text style={{ fontSize: 12, color: theme.textSecondary }}>Queued:</Text>
@@ -4857,7 +4918,7 @@ export default function App() {
                   fontSize: 16,
                   fontWeight: 'bold',
                 }}>
-                  {offlineTimerState.isRunning ? '⏹️ STOP TIMER' : '▶️ START TIMER'}
+                  {offlineTimerState.isRunning ? '⏹️ STOP TIMER' : '🔐 START TIMER'}
                 </Text>
                 {(!currentClassInfo || currentClassInfo.currentLecture === 'Break') && (
                   <Text style={{
@@ -4867,6 +4928,17 @@ export default function App() {
                     opacity: 0.8,
                   }}>
                     Available during active lectures only
+                  </Text>
+                )}
+                {(currentClassInfo && currentClassInfo.currentLecture !== 'Break' && !offlineTimerState.isRunning) && (
+                  <Text style={{
+                    color: '#ffffff',
+                    fontSize: 11,
+                    marginTop: 5,
+                    opacity: 0.9,
+                    textAlign: 'center',
+                  }}>
+                    Requires WiFi + Face verification
                   </Text>
                 )}
               </TouchableOpacity>
