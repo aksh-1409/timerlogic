@@ -188,10 +188,7 @@ class OfflineTimerService {
       // Stop counting
       this.stopCounting();
       
-      // Final sync before stopping
-      await this.syncToServer();
-      
-      // Reset state
+      // Reset state BEFORE syncing
       this.isRunning = false;
       this.isPaused = false;
       this.currentLecture = null;
@@ -200,6 +197,9 @@ class OfflineTimerService {
       
       // Save state
       await this.saveState();
+      
+      // Final sync with stopped state
+      await this.syncToServer();
       
       // Notify listeners
       this.notifyListeners({
@@ -446,6 +446,8 @@ class OfflineTimerService {
       
       console.log('🔄 Syncing offline timer to server...');
       console.log('   Timer seconds:', this.timerSeconds);
+      console.log('   Is Running:', this.isRunning);
+      console.log('   Is Paused:', this.isPaused);
       console.log('   Lecture:', this.currentLecture?.subject);
       
       // Get current BSSID for validation
