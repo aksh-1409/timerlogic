@@ -136,6 +136,12 @@ class OfflineTimerService {
   async startTimer(lectureInfo) {
       try {
         console.log('▶️ Starting offline timer for lecture:', lectureInfo);
+        console.log('🔍 Lecture info details:');
+        console.log(`   Subject: ${lectureInfo.subject}`);
+        console.log(`   Teacher: ${lectureInfo.teacher}`);
+        console.log(`   Room: ${lectureInfo.room}`);
+        console.log(`   Start time: ${lectureInfo.startTime}`);
+        console.log(`   End time: ${lectureInfo.endTime}`);
 
         // Step 1: Validate BSSID using BSSIDStorage system
         console.log('📶 Step 1: Validating BSSID...');
@@ -807,22 +813,43 @@ class OfflineTimerService {
    */
   isLectureEnded() {
     if (!this.currentLecture || !this.currentLecture.endTime) {
+      console.log('🔍 Lecture end check: No lecture or endTime available');
       return false;
     }
     
     const now = new Date();
-    const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+    const currentHour = now.getHours();
+    const currentMinute = now.getMinutes();
+    const currentTimeInMinutes = currentHour * 60 + currentMinute;
     
-    // Compare current time with lecture end time
-    return currentTime > this.currentLecture.endTime;
+    // Parse lecture end time (format: "HH:MM")
+    const [endHour, endMinute] = this.currentLecture.endTime.split(':').map(Number);
+    const endTimeInMinutes = endHour * 60 + endMinute;
+    
+    const isEnded = currentTimeInMinutes >= endTimeInMinutes;
+    
+    console.log('🔍 Lecture end check:');
+    console.log(`   Current time: ${currentHour.toString().padStart(2, '0')}:${currentMinute.toString().padStart(2, '0')} (${currentTimeInMinutes} minutes)`);
+    console.log(`   Lecture end: ${this.currentLecture.endTime} (${endTimeInMinutes} minutes)`);
+    console.log(`   Is ended: ${isEnded}`);
+    
+    return isEnded;
   }
 
   /**
    * Setup lecture end time monitoring
    */
   setupLectureEndMonitoring() {
-    // Check every 30 seconds if lecture has ended
+    console.log('🔧 Setting up lecture end time monitoring (10-second intervals)');
+    
+    // Check every 10 seconds if lecture has ended
     this.lectureEndCheckInterval = setInterval(async () => {
+      console.log('⏰ Lecture end monitoring check...');
+      console.log(`   Timer running: ${this.isRunning}`);
+      console.log(`   Timer paused: ${this.isPaused}`);
+      console.log(`   Current lecture: ${this.currentLecture?.subject || 'None'}`);
+      console.log(`   Lecture end time: ${this.currentLecture?.endTime || 'Not set'}`);
+      
       if (this.isRunning && !this.isPaused && this.currentLecture) {
         if (this.isLectureEnded()) {
           console.log('⏰ Lecture period has ended - automatically stopping timer');
@@ -841,8 +868,10 @@ class OfflineTimerService {
             attendedMinutes: Math.floor(this.timerSeconds / 60)
           });
         }
+      } else {
+        console.log('⏰ Skipping lecture end check (timer not active or no lecture)');
       }
-    }, 30000); // Check every 30 seconds
+    }, 10000); // Check every 10 seconds
   }
 
   /**
